@@ -1,5 +1,35 @@
 # Kompoz
 
+<!--toc:start-->
+
+- [Kompoz](#kompoz)
+  - [Features](#features)
+  - [Installation](#installation)
+  - [Quick Start](#quick-start)
+    - [1. Define Predicates](#1-define-predicates)
+    - [2. Compose Rules](#2-compose-rules)
+    - [3. Run Rules](#3-run-rules)
+  - [Operators](#operators)
+  - [Transforms (Data Pipelines)](#transforms-data-pipelines)
+  - [Config-Driven Rules (JSON/YAML)](#config-driven-rules-jsonyaml)
+    - [Using Registry](#using-registry)
+    - [YAML Config](#yaml-config)
+    - [JSON Config](#json-config)
+  - [Config Syntax Reference](#config-syntax-reference)
+  - [Testing](#testing)
+  - [Use Cases](#use-cases)
+    - [Access Control](#access-control)
+    - [Form Validation](#form-validation)
+    - [Data Pipeline with Fallbacks](#data-pipeline-with-fallbacks)
+    - [Feature Flags](#feature-flags)
+  - [API Reference](#api-reference)
+    - [Core Classes](#core-classes)
+    - [Decorators](#decorators)
+    - [Utility Combinators](#utility-combinators)
+  - [Contributing](#contributing)
+  - [License](#license)
+          <!--toc:end-->
+
 **Composable Predicate & Transform Combinators for Python**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -8,7 +38,19 @@
 Kompoz lets you build complex validation rules and data pipelines using intuitive Python operators. Instead of nested `if/else` statements, write declarative, composable logic:
 
 ```python
-from kompoz import predicate, Registry
+from dataclasses import dataclass
+
+from kompoz import predicate
+
+
+@dataclass
+class User:
+    name: str
+    is_admin: bool = False
+    is_active: bool = True
+    is_banned: bool = False
+    account_age_days: int = 0
+    credit_score: int = 500
 
 @predicate
 def is_admin(user):
@@ -26,6 +68,7 @@ def account_older_than(user, days):
 can_access = is_admin | (is_active & account_older_than(30))
 
 # Use it
+user = User(name="foo", is_admin=False, account_age_days=1000)
 ok, _ = can_access.run(user)
 ```
 
@@ -201,14 +244,14 @@ ok, _ = rule.run(User(account_age_days=60))
 ```yaml
 # rules.yaml
 or:
-    - is_admin
-    - and:
-          - is_active
-          - not: is_banned
-          - account_older_than: [30]
-          - or:
-                - credit_above: [650]
-                - has_override
+  - is_admin
+  - and:
+    - is_active
+    - not: is_banned
+    - account_older_than: [30]
+    - or:
+      - credit_above: [650]
+      - has_override
 ```
 
 ```python
