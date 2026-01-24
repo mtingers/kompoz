@@ -16,8 +16,10 @@ from kompoz import (
     Registry,
     Transform,
     Try,
-    predicate,
-    transform,
+    pipe,
+    pipe_args,
+    rule,
+    rule_args,
 )
 
 # =============================================================================
@@ -57,7 +59,7 @@ class TestPredicate:
         assert is_positive.run(0) == (False, 0)
 
     def test_predicate_decorator_simple(self) -> None:
-        @predicate
+        @rule
         def is_even(x: int) -> bool:
             return x % 2 == 0
 
@@ -65,7 +67,7 @@ class TestPredicate:
         assert is_even.run(3) == (False, 3)
 
     def test_predicate_decorator_parameterized(self) -> None:
-        @predicate
+        @rule_args
         def greater_than(x: int, threshold: int) -> bool:
             return x > threshold
 
@@ -75,7 +77,7 @@ class TestPredicate:
         assert gt_10.run(10) == (False, 10)
 
     def test_predicate_repr(self) -> None:
-        @predicate
+        @rule
         def is_valid(x: int) -> bool:
             return True
 
@@ -96,14 +98,14 @@ class TestTransform:
         assert double.run(0) == (True, 0)
 
     def test_transform_decorator_simple(self) -> None:
-        @transform
+        @pipe
         def increment(x: int) -> int:
             return x + 1
 
         assert increment.run(5) == (True, 6)
 
     def test_transform_decorator_parameterized(self) -> None:
-        @transform
+        @pipe_args
         def add(x: int, n: int) -> int:
             return x + n
 
@@ -111,7 +113,7 @@ class TestTransform:
         assert add_10.run(5) == (True, 15)
 
     def test_transform_exception_returns_false(self) -> None:
-        @transform
+        @pipe
         def divide_by_zero(x: int) -> int:
             return x // 0  # Will raise ZeroDivisionError
 
@@ -120,7 +122,7 @@ class TestTransform:
         assert result == 5  # original value preserved
 
     def test_transform_repr(self) -> None:
-        @transform
+        @pipe
         def process(x: int) -> int:
             return x
 
@@ -136,120 +138,120 @@ class TestOperators:
     """Test combinator operators."""
 
     def test_and_both_true(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_even(x: int) -> bool:
             return x % 2 == 0
 
-        rule = is_positive & is_even
-        assert rule.run(4)[0] is True
+        check = is_positive & is_even
+        assert check.run(4)[0] is True
 
     def test_and_first_false(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_even(x: int) -> bool:
             return x % 2 == 0
 
-        rule = is_positive & is_even
-        assert rule.run(-4)[0] is False
+        check = is_positive & is_even
+        assert check.run(-4)[0] is False
 
     def test_and_second_false(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_even(x: int) -> bool:
             return x % 2 == 0
 
-        rule = is_positive & is_even
-        assert rule.run(3)[0] is False
+        check = is_positive & is_even
+        assert check.run(3)[0] is False
 
     def test_or_first_true(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_zero(x: int) -> bool:
             return x == 0
 
-        rule = is_positive | is_zero
-        assert rule.run(5)[0] is True
+        check = is_positive | is_zero
+        assert check.run(5)[0] is True
 
     def test_or_second_true(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_zero(x: int) -> bool:
             return x == 0
 
-        rule = is_positive | is_zero
-        assert rule.run(0)[0] is True
+        check = is_positive | is_zero
+        assert check.run(0)[0] is True
 
     def test_or_both_false(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_zero(x: int) -> bool:
             return x == 0
 
-        rule = is_positive | is_zero
-        assert rule.run(-5)[0] is False
+        check = is_positive | is_zero
+        assert check.run(-5)[0] is False
 
     def test_not(self) -> None:
-        @predicate
+        @rule
         def is_banned(x: int) -> bool:
             return x < 0
 
-        rule = ~is_banned
-        assert rule.run(5)[0] is True
-        assert rule.run(-5)[0] is False
+        check = ~is_banned
+        assert check.run(5)[0] is True
+        assert check.run(-5)[0] is False
 
     def test_then_operator(self) -> None:
-        @transform
+        @pipe
         def double(x: int) -> int:
             return x * 2
 
-        @transform
+        @pipe
         def add_one(x: int) -> int:
             return x + 1
 
-        rule = double >> add_one
-        ok, result = rule.run(5)
+        pipeline = double >> add_one
+        ok, result = pipeline.run(5)
         assert ok is True
         assert result == 11  # (5 * 2) + 1
 
     def test_complex_combination(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
-        @predicate
+        @rule
         def is_even(x: int) -> bool:
             return x % 2 == 0
 
-        @predicate
+        @rule
         def is_small(x: int) -> bool:
             return x < 100
 
-        rule = is_positive & (is_even | is_small)
+        check = is_positive & (is_even | is_small)
 
-        assert rule.run(4)[0] is True  # positive and even
-        assert rule.run(3)[0] is True  # positive and small
-        assert rule.run(102)[0] is True  # positive and even (not small)
-        assert rule.run(103)[0] is False  # positive but odd and not small
-        assert rule.run(-4)[0] is False  # not positive
+        assert check.run(4)[0] is True  # positive and even
+        assert check.run(3)[0] is True  # positive and small
+        assert check.run(102)[0] is True  # positive and even (not small)
+        assert check.run(103)[0] is False  # positive but odd and not small
+        assert check.run(-4)[0] is False  # not positive
 
 
 # =============================================================================
@@ -295,25 +297,25 @@ class TestRegistry:
         return reg
 
     def test_load_simple_predicate(self, user_registry: Registry[User]) -> None:
-        rule = user_registry.load("is_admin")
-        assert rule.run(User("Admin", is_admin=True))[0] is True
-        assert rule.run(User("User", is_admin=False))[0] is False
+        loaded = user_registry.load("is_admin")
+        assert loaded.run(User("Admin", is_admin=True))[0] is True
+        assert loaded.run(User("User", is_admin=False))[0] is False
 
     def test_load_parameterized_predicate(self, user_registry: Registry[User]) -> None:
-        rule = user_registry.load({"account_older_than": [30]})
-        assert rule.run(User("Old", account_age_days=60))[0] is True
-        assert rule.run(User("New", account_age_days=10))[0] is False
+        loaded = user_registry.load({"account_older_than": [30]})
+        assert loaded.run(User("Old", account_age_days=60))[0] is True
+        assert loaded.run(User("New", account_age_days=10))[0] is False
 
     def test_load_and_config(self, user_registry: Registry[User]) -> None:
-        rule = user_registry.load({"and": ["is_active", {"not": "is_banned"}]})
-        assert rule.run(User("Good", is_active=True, is_banned=False))[0] is True
-        assert rule.run(User("Bad", is_active=True, is_banned=True))[0] is False
+        loaded = user_registry.load({"and": ["is_active", {"not": "is_banned"}]})
+        assert loaded.run(User("Good", is_active=True, is_banned=False))[0] is True
+        assert loaded.run(User("Bad", is_active=True, is_banned=True))[0] is False
 
     def test_load_or_config(self, user_registry: Registry[User]) -> None:
-        rule = user_registry.load({"or": ["is_admin", "has_override"]})
-        assert rule.run(User("Admin", is_admin=True))[0] is True
-        assert rule.run(User("Override", has_override=True))[0] is True
-        assert rule.run(User("Normal"))[0] is False
+        loaded = user_registry.load({"or": ["is_admin", "has_override"]})
+        assert loaded.run(User("Admin", is_admin=True))[0] is True
+        assert loaded.run(User("Override", has_override=True))[0] is True
+        assert loaded.run(User("Normal"))[0] is False
 
     def test_load_complex_config(self, user_registry: Registry[User]) -> None:
         config = {
@@ -330,30 +332,34 @@ class TestRegistry:
                 },
             ]
         }
-        rule = user_registry.load(config)
+        loaded = user_registry.load(config)
 
         # Should pass
-        assert rule.run(User("Admin", is_admin=True))[0] is True
-        assert rule.run(User("Good", account_age_days=60, credit_score=700))[0] is True
+        assert loaded.run(User("Admin", is_admin=True))[0] is True
         assert (
-            rule.run(User("Override", account_age_days=60, has_override=True))[0]
+            loaded.run(User("Good", account_age_days=60, credit_score=700))[0] is True
+        )
+        assert (
+            loaded.run(User("Override", account_age_days=60, has_override=True))[0]
             is True
         )
 
         # Should fail
         assert (
-            rule.run(
+            loaded.run(
                 User("Banned", is_banned=True, account_age_days=60, credit_score=700)
             )[0]
             is False
         )
-        assert rule.run(User("New", account_age_days=10, credit_score=700))[0] is False
         assert (
-            rule.run(User("LowCredit", account_age_days=60, credit_score=500))[0]
+            loaded.run(User("New", account_age_days=10, credit_score=700))[0] is False
+        )
+        assert (
+            loaded.run(User("LowCredit", account_age_days=60, credit_score=500))[0]
             is False
         )
         assert (
-            rule.run(
+            loaded.run(
                 User(
                     "WrongCountry", account_age_days=60, credit_score=700, country="DE"
                 )
@@ -362,8 +368,8 @@ class TestRegistry:
         )
 
     def test_load_empty_and(self, user_registry: Registry[User]) -> None:
-        rule = user_registry.load({"and": []})
-        assert rule.run(User("Anyone"))[0] is True  # Always
+        loaded = user_registry.load({"and": []})
+        assert loaded.run(User("Anyone"))[0] is True  # Always
 
     def test_unknown_predicate_raises(self, user_registry: Registry[User]) -> None:
         with pytest.raises(ValueError, match="Unknown predicate"):
@@ -401,19 +407,19 @@ class TestTransformPipeline:
         return reg
 
     def test_simple_transform_chain(self, data_registry: Registry[Data]) -> None:
-        rule = data_registry.load({"and": ["double", {"add": [10]}]})
-        ok, result = rule.run(Data(5))
+        loaded = data_registry.load({"and": ["double", {"add": [10]}]})
+        ok, result = loaded.run(Data(5))
         assert ok is True
         assert result.value == 20  # (5 * 2) + 10
 
     def test_transform_with_predicate(self, data_registry: Registry[Data]) -> None:
-        rule = data_registry.load({"and": ["is_positive", "double"]})
+        loaded = data_registry.load({"and": ["is_positive", "double"]})
 
-        ok, result = rule.run(Data(5))
+        ok, result = loaded.run(Data(5))
         assert ok is True
         assert result.value == 10
 
-        ok, result = rule.run(Data(-5))
+        ok, result = loaded.run(Data(-5))
         assert ok is False
         assert result.value == -5
 
@@ -500,7 +506,7 @@ class TestEdgeCases:
     """Test edge cases and error handling."""
 
     def test_callable_shorthand(self) -> None:
-        @predicate
+        @rule
         def is_positive(x: int) -> bool:
             return x > 0
 
@@ -510,7 +516,7 @@ class TestEdgeCases:
         assert result == 5
 
     def test_context_preserved_on_failure(self) -> None:
-        @predicate
+        @rule
         def always_false(x: dict[str, str]) -> bool:
             return False
 
@@ -520,11 +526,11 @@ class TestEdgeCases:
         assert result is original
 
     def test_chained_transforms_preserve_context(self) -> None:
-        @transform
+        @pipe
         def add_a(d: dict[str, int]) -> dict[str, int]:
             return {**d, "a": 1}
 
-        @transform
+        @pipe
         def add_b(d: dict[str, int]) -> dict[str, int]:
             return {**d, "b": 2}
 
@@ -552,7 +558,7 @@ class TestParameterized:
         ],
     )
     def test_greater_than_5(self, value: int, expected: bool) -> None:
-        @predicate
+        @rule
         def gt_5(x: int) -> bool:
             return x > 5
 
@@ -568,14 +574,14 @@ class TestParameterized:
         ],
     )
     def test_complex_rule(self, account_age: int, credit: int, expected: bool) -> None:
-        @predicate
+        @rule
         def old_account(u: User) -> bool:
             return u.account_age_days > 30
 
-        @predicate
+        @rule
         def good_credit(u: User) -> bool:
             return u.credit_score > 600
 
-        rule = old_account & good_credit
+        check = old_account & good_credit
         user = User("Test", account_age_days=account_age, credit_score=credit)
-        assert rule.run(user)[0] is expected
+        assert check.run(user)[0] is expected

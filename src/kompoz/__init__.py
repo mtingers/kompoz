@@ -12,17 +12,17 @@ Operators:
     >> = "then" (always runs both, keeps second result)
 
 Example:
-    from kompoz import predicate, transform, Registry
+    from kompoz import rule, rule_args
 
-    @predicate
+    @rule
     def is_admin(user):
         return user.is_admin
 
-    @predicate
+    @rule
     def is_active(user):
         return user.is_active
 
-    @predicate
+    @rule_args
     def account_older_than(user, days):
         return user.account_age_days > days
 
@@ -40,24 +40,32 @@ __author__ = "Your Name"
 __all__ = [
     "Combinator",
     "Predicate",
+    "PredicateFactory",
     "Transform",
+    "TransformFactory",
     "Try",
     "Always",
     "Never",
     "Debug",
     "Registry",
+    "rule",
+    "rule_args",
+    "pipe",
+    "pipe_args",
+    # Aliases for backwards compatibility
     "predicate",
+    "predicate_factory",
     "transform",
+    "transform_factory",
 ]
 
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
-T_contra = TypeVar("T_contra", contravariant=True)
 
 
 # =============================================================================
@@ -171,48 +179,62 @@ class Predicate(Combinator[T]):
         return f"Predicate({self.name})"
 
 
-# Type alias for parameterized predicate factory
-PredicateFactory = Callable[..., Predicate[T]]
-
-
-@overload
-def predicate(fn: Callable[[T], bool]) -> Predicate[T]: ...
-
-
-@overload
-def predicate(fn: Callable[..., bool]) -> PredicateFactory[Any]: ...
-
-
-def predicate(fn: Callable[..., bool]) -> Predicate[Any] | PredicateFactory[Any]:
+class PredicateFactory(Generic[T]):
     """
-    Decorator to create a predicate from a function.
+    A factory that creates Predicates when called with arguments.
 
-    Simple predicate (single argument - the context):
-        @predicate
+    Used for parameterized predicates like `older_than(30)`.
+    """
+
+    def __init__(self, fn: Callable[..., bool], name: str):
+        self._fn = fn
+        self._name = name
+        self.__name__ = name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Predicate[T]:
+        name = f"{self._name}({', '.join(map(repr, args))})"
+        return Predicate(lambda ctx: self._fn(ctx, *args, **kwargs), name)
+
+    def __repr__(self) -> str:
+        return f"PredicateFactory({self._name})"
+
+
+def rule(fn: Callable[[T], bool]) -> Predicate[T]:
+    """
+    Decorator to create a simple rule/predicate (single context argument).
+
+    Example:
+        @rule
         def is_admin(user: User) -> bool:
             return user.is_admin
 
-        # Usage: is_admin.run(user)
+        ok, _ = is_admin.run(user)
 
-    Parameterized predicate (extra arguments):
-        @predicate
-        def older_than(user: User, days: int) -> bool:
-            return user.age > days
-
-        # Usage: older_than(30).run(user)
+    For parameterized rules, use @rule_args instead.
     """
-    params = list(inspect.signature(fn).parameters)
+    return Predicate(fn, fn.__name__)
 
-    if len(params) == 1:
-        return Predicate(fn, fn.__name__)
-    else:
 
-        def factory(*args: Any, **kwargs: Any) -> Predicate[Any]:
-            name = f"{fn.__name__}({', '.join(map(repr, args))})"
-            return Predicate(lambda ctx: fn(ctx, *args, **kwargs), name)
+def rule_args(fn: Callable[..., bool]) -> PredicateFactory[Any]:
+    """
+    Decorator to create a parameterized rule factory.
 
-        factory.__name__ = fn.__name__
-        return factory
+    Example:
+        @rule_args
+        def older_than(user: User, days: int) -> bool:
+            return user.account_age_days > days
+
+        r = older_than(30)  # Returns Predicate
+        ok, _ = r.run(user)
+
+    For simple rules (single argument), use @rule instead.
+    """
+    return PredicateFactory(fn, fn.__name__)
+
+
+# Aliases for backwards compatibility
+predicate = rule
+predicate_factory = rule_args
 
 
 # =============================================================================
@@ -245,48 +267,62 @@ class Transform(Combinator[T]):
         return f"Transform({self.name})"
 
 
-# Type alias for parameterized transform factory
-TransformFactory = Callable[..., Transform[T]]
-
-
-@overload
-def transform(fn: Callable[[T], T]) -> Transform[T]: ...
-
-
-@overload
-def transform(fn: Callable[..., Any]) -> TransformFactory[Any]: ...
-
-
-def transform(fn: Callable[..., Any]) -> Transform[Any] | TransformFactory[Any]:
+class TransformFactory(Generic[T]):
     """
-    Decorator to create a transform from a function.
+    A factory that creates Transforms when called with arguments.
 
-    Simple transform (single argument - the context):
-        @transform
+    Used for parameterized transforms like `add(10)`.
+    """
+
+    def __init__(self, fn: Callable[..., T], name: str):
+        self._fn = fn
+        self._name = name
+        self.__name__ = name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Transform[T]:
+        name = f"{self._name}({', '.join(map(repr, args))})"
+        return Transform(lambda ctx: self._fn(ctx, *args, **kwargs), name)
+
+    def __repr__(self) -> str:
+        return f"TransformFactory({self._name})"
+
+
+def pipe(fn: Callable[[T], T]) -> Transform[T]:
+    """
+    Decorator to create a simple transform/pipe (single context argument).
+
+    Example:
+        @pipe
         def double(data: int) -> int:
             return data * 2
 
-        # Usage: double.run(5)
+        ok, result = double.run(5)
 
-    Parameterized transform (extra arguments):
-        @transform
+    For parameterized transforms, use @pipe_args instead.
+    """
+    return Transform(fn, fn.__name__)
+
+
+def pipe_args(fn: Callable[..., Any]) -> TransformFactory[Any]:
+    """
+    Decorator to create a parameterized transform factory.
+
+    Example:
+        @pipe_args
         def multiply(data: int, factor: int) -> int:
             return data * factor
 
-        # Usage: multiply(10).run(5)
+        t = multiply(10)  # Returns Transform
+        ok, result = t.run(5)
+
+    For simple transforms (single argument), use @pipe instead.
     """
-    params = list(inspect.signature(fn).parameters)
+    return TransformFactory(fn, fn.__name__)
 
-    if len(params) == 1:
-        return Transform(fn, fn.__name__)
-    else:
 
-        def factory(*args: Any, **kwargs: Any) -> Transform[Any]:
-            name = f"{fn.__name__}({', '.join(map(repr, args))})"
-            return Transform(lambda ctx: fn(ctx, *args, **kwargs), name)
-
-        factory.__name__ = fn.__name__
-        return factory
+# Aliases for backwards compatibility
+transform = pipe
+transform_factory = pipe_args
 
 
 # =============================================================================
@@ -370,7 +406,7 @@ class Registry(Generic[T]):
     Allows loading combinator chains from JSON/YAML config files.
 
     Example:
-        reg = Registry[User]()
+        reg: Registry[User] = Registry()
 
         @reg.predicate
         def is_admin(u: User) -> bool:
@@ -385,19 +421,16 @@ class Registry(Generic[T]):
     """
 
     def __init__(self) -> None:
-        self._predicates: dict[str, Predicate[T] | Callable[..., Predicate[T]]] = {}
-        self._transforms: dict[str, Transform[T] | Callable[..., Transform[T]]] = {}
+        self._predicates: dict[str, Predicate[T] | PredicateFactory[T]] = {}
+        self._transforms: dict[str, Transform[T] | TransformFactory[T]] = {}
 
-    @overload
-    def predicate(self, fn: Callable[[T], bool]) -> Predicate[T]: ...
+    def predicate(self, fn: Callable[..., bool]) -> Predicate[T] | PredicateFactory[T]:
+        """
+        Decorator to register a predicate.
 
-    @overload
-    def predicate(self, fn: Callable[..., bool]) -> Callable[..., Predicate[T]]: ...
-
-    def predicate(
-        self, fn: Callable[..., bool]
-    ) -> Predicate[T] | Callable[..., Predicate[T]]:
-        """Decorator to register a predicate."""
+        For simple predicates (single arg), returns Predicate[T].
+        For parameterized predicates (multiple args), returns PredicateFactory[T].
+        """
         params = list(inspect.signature(fn).parameters)
 
         if len(params) == 1:
@@ -405,25 +438,17 @@ class Registry(Generic[T]):
             self._predicates[fn.__name__] = p
             return p
         else:
-
-            def factory(*args: Any, **kwargs: Any) -> Predicate[T]:
-                name = f"{fn.__name__}({', '.join(map(repr, args))})"
-                return Predicate(lambda ctx: fn(ctx, *args, **kwargs), name)
-
-            factory.__name__ = fn.__name__
+            factory: PredicateFactory[T] = PredicateFactory(fn, fn.__name__)
             self._predicates[fn.__name__] = factory
             return factory
 
-    @overload
-    def transform(self, fn: Callable[[T], T]) -> Transform[T]: ...
+    def transform(self, fn: Callable[..., T]) -> Transform[T] | TransformFactory[T]:
+        """
+        Decorator to register a transform.
 
-    @overload
-    def transform(self, fn: Callable[..., T]) -> Callable[..., Transform[T]]: ...
-
-    def transform(
-        self, fn: Callable[..., T]
-    ) -> Transform[T] | Callable[..., Transform[T]]:
-        """Decorator to register a transform."""
+        For simple transforms (single arg), returns Transform[T].
+        For parameterized transforms (multiple args), returns TransformFactory[T].
+        """
         params = list(inspect.signature(fn).parameters)
 
         if len(params) == 1:
@@ -431,12 +456,7 @@ class Registry(Generic[T]):
             self._transforms[fn.__name__] = t
             return t
         else:
-
-            def factory(*args: Any, **kwargs: Any) -> Transform[T]:
-                name = f"{fn.__name__}({', '.join(map(repr, args))})"
-                return Transform(lambda ctx: fn(ctx, *args, **kwargs), name)
-
-            factory.__name__ = fn.__name__
+            factory: TransformFactory[T] = TransformFactory(fn, fn.__name__)
             self._transforms[fn.__name__] = factory
             return factory
 
@@ -539,36 +559,36 @@ class Registry(Generic[T]):
         """Resolve a name to a predicate or transform, optionally with args."""
         # Check predicates first, then transforms
         if name in self._predicates:
-            factory_or_pred = self._predicates[name]
+            pred_or_factory = self._predicates[name]
             if args is None:
-                if callable(factory_or_pred) and not isinstance(
-                    factory_or_pred, Combinator
-                ):
+                if isinstance(pred_or_factory, PredicateFactory):
                     raise ValueError(f"Predicate '{name}' requires arguments")
-                return factory_or_pred  # type: ignore
+                return pred_or_factory
             else:
+                if isinstance(pred_or_factory, Predicate):
+                    raise ValueError(f"Predicate '{name}' does not take arguments")
                 if isinstance(args, list):
-                    return factory_or_pred(*args)  # type: ignore
+                    return pred_or_factory(*args)
                 elif isinstance(args, dict):
-                    return factory_or_pred(**args)  # type: ignore
+                    return pred_or_factory(**args)
                 else:
-                    return factory_or_pred(args)  # type: ignore
+                    return pred_or_factory(args)
 
         elif name in self._transforms:
-            factory_or_trans = self._transforms[name]
+            trans_or_factory = self._transforms[name]
             if args is None:
-                if callable(factory_or_trans) and not isinstance(
-                    factory_or_trans, Combinator
-                ):
+                if isinstance(trans_or_factory, TransformFactory):
                     raise ValueError(f"Transform '{name}' requires arguments")
-                return factory_or_trans  # type: ignore
+                return trans_or_factory
             else:
+                if isinstance(trans_or_factory, Transform):
+                    raise ValueError(f"Transform '{name}' does not take arguments")
                 if isinstance(args, list):
-                    return factory_or_trans(*args)  # type: ignore
+                    return trans_or_factory(*args)
                 elif isinstance(args, dict):
-                    return factory_or_trans(**args)  # type: ignore
+                    return trans_or_factory(**args)
                 else:
-                    return factory_or_trans(args)  # type: ignore
+                    return trans_or_factory(args)
 
         raise ValueError(f"Unknown predicate or transform: '{name}'")
 
