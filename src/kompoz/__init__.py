@@ -10,6 +10,27 @@ Operators:
     |  = "or else" (fallback, short-circuits on success)
     ~  = "not" / "inverse"
     >> = "then" (always runs both, keeps second result)
+
+Example:
+    from kompoz import predicate, transform, Registry
+
+    @predicate
+    def is_admin(user):
+        return user.is_admin
+
+    @predicate
+    def is_active(user):
+        return user.is_active
+
+    @predicate
+    def account_older_than(user, days):
+        return user.account_age_days > days
+
+    # Combine with operators
+    can_access = is_admin | (is_active & account_older_than(30))
+
+    # Use it
+    ok, _ = can_access.run(user)
 """
 
 from __future__ import annotations
@@ -33,9 +54,10 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, overload
 
 T = TypeVar("T")
+T_contra = TypeVar("T_contra", contravariant=True)
 
 
 # =============================================================================
@@ -134,7 +156,7 @@ class Predicate(Combinator[T]):
     A combinator that checks a condition without modifying context.
 
     Example:
-        is_valid = Predicate(lambda x: x > 0, "is_positive")
+        is_valid: Predicate[int] = Predicate(lambda x: x > 0, "is_positive")
         ok, _ = is_valid.run(5)  # (True, 5)
     """
 
@@ -149,20 +171,32 @@ class Predicate(Combinator[T]):
         return f"Predicate({self.name})"
 
 
-def predicate(fn: Callable[..., bool]) -> Predicate[T] | Callable[..., Predicate[T]]:
+# Type alias for parameterized predicate factory
+PredicateFactory = Callable[..., Predicate[T]]
+
+
+@overload
+def predicate(fn: Callable[[T], bool]) -> Predicate[T]: ...
+
+
+@overload
+def predicate(fn: Callable[..., bool]) -> PredicateFactory[Any]: ...
+
+
+def predicate(fn: Callable[..., bool]) -> Predicate[Any] | PredicateFactory[Any]:
     """
     Decorator to create a predicate from a function.
 
     Simple predicate (single argument - the context):
         @predicate
-        def is_admin(user):
+        def is_admin(user: User) -> bool:
             return user.is_admin
 
         # Usage: is_admin.run(user)
 
     Parameterized predicate (extra arguments):
         @predicate
-        def older_than(user, days):
+        def older_than(user: User, days: int) -> bool:
             return user.age > days
 
         # Usage: older_than(30).run(user)
@@ -173,7 +207,7 @@ def predicate(fn: Callable[..., bool]) -> Predicate[T] | Callable[..., Predicate
         return Predicate(fn, fn.__name__)
     else:
 
-        def factory(*args: Any, **kwargs: Any) -> Predicate[T]:
+        def factory(*args: Any, **kwargs: Any) -> Predicate[Any]:
             name = f"{fn.__name__}({', '.join(map(repr, args))})"
             return Predicate(lambda ctx: fn(ctx, *args, **kwargs), name)
 
@@ -193,7 +227,7 @@ class Transform(Combinator[T]):
     Succeeds unless an exception is raised.
 
     Example:
-        double = Transform(lambda x: x * 2, "double")
+        double: Transform[int] = Transform(lambda x: x * 2, "double")
         ok, result = double.run(5)  # (True, 10)
     """
 
@@ -211,20 +245,32 @@ class Transform(Combinator[T]):
         return f"Transform({self.name})"
 
 
-def transform(fn: Callable[..., T]) -> Transform[T] | Callable[..., Transform[T]]:
+# Type alias for parameterized transform factory
+TransformFactory = Callable[..., Transform[T]]
+
+
+@overload
+def transform(fn: Callable[[T], T]) -> Transform[T]: ...
+
+
+@overload
+def transform(fn: Callable[..., Any]) -> TransformFactory[Any]: ...
+
+
+def transform(fn: Callable[..., Any]) -> Transform[Any] | TransformFactory[Any]:
     """
     Decorator to create a transform from a function.
 
     Simple transform (single argument - the context):
         @transform
-        def double(data):
+        def double(data: int) -> int:
             return data * 2
 
         # Usage: double.run(5)
 
     Parameterized transform (extra arguments):
         @transform
-        def multiply(data, factor):
+        def multiply(data: int, factor: int) -> int:
             return data * factor
 
         # Usage: multiply(10).run(5)
@@ -235,7 +281,7 @@ def transform(fn: Callable[..., T]) -> Transform[T] | Callable[..., Transform[T]
         return Transform(fn, fn.__name__)
     else:
 
-        def factory(*args: Any, **kwargs: Any) -> Transform[T]:
+        def factory(*args: Any, **kwargs: Any) -> Transform[Any]:
             name = f"{fn.__name__}({', '.join(map(repr, args))})"
             return Transform(lambda ctx: fn(ctx, *args, **kwargs), name)
 
@@ -327,11 +373,11 @@ class Registry(Generic[T]):
         reg = Registry[User]()
 
         @reg.predicate
-        def is_admin(u):
+        def is_admin(u: User) -> bool:
             return u.is_admin
 
         @reg.predicate
-        def older_than(u, days):
+        def older_than(u: User, days: int) -> bool:
             return u.age > days
 
         # Load from config
@@ -342,6 +388,12 @@ class Registry(Generic[T]):
         self._predicates: dict[str, Predicate[T] | Callable[..., Predicate[T]]] = {}
         self._transforms: dict[str, Transform[T] | Callable[..., Transform[T]]] = {}
 
+    @overload
+    def predicate(self, fn: Callable[[T], bool]) -> Predicate[T]: ...
+
+    @overload
+    def predicate(self, fn: Callable[..., bool]) -> Callable[..., Predicate[T]]: ...
+
     def predicate(
         self, fn: Callable[..., bool]
     ) -> Predicate[T] | Callable[..., Predicate[T]]:
@@ -349,7 +401,7 @@ class Registry(Generic[T]):
         params = list(inspect.signature(fn).parameters)
 
         if len(params) == 1:
-            p = Predicate(fn, fn.__name__)
+            p: Predicate[T] = Predicate(fn, fn.__name__)
             self._predicates[fn.__name__] = p
             return p
         else:
@@ -362,6 +414,12 @@ class Registry(Generic[T]):
             self._predicates[fn.__name__] = factory
             return factory
 
+    @overload
+    def transform(self, fn: Callable[[T], T]) -> Transform[T]: ...
+
+    @overload
+    def transform(self, fn: Callable[..., T]) -> Callable[..., Transform[T]]: ...
+
     def transform(
         self, fn: Callable[..., T]
     ) -> Transform[T] | Callable[..., Transform[T]]:
@@ -369,7 +427,7 @@ class Registry(Generic[T]):
         params = list(inspect.signature(fn).parameters)
 
         if len(params) == 1:
-            t = Transform(fn, fn.__name__)
+            t: Transform[T] = Transform(fn, fn.__name__)
             self._transforms[fn.__name__] = t
             return t
         else:
@@ -475,8 +533,7 @@ class Registry(Generic[T]):
             else:
                 return self._resolve(key, value)
 
-        # programmer error?
-        # raise ValueError(f"Invalid config node: {node}")
+        raise ValueError(f"Invalid config node: {node}")
 
     def _resolve(self, name: str, args: Any = None) -> Combinator[T]:
         """Resolve a name to a predicate or transform, optionally with args."""
