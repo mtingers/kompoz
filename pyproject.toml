@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Composable predicate and transform combinators with operator overloading"
 license = "MIT"
 readme = "README.md"
-authors = [{ name = "Matth", email = "matth@mtingers.com" }]
+authors = [{ name = "Matth Ingersoll", email = "matth@mtingers.com" }]
 requires-python = ">=3.10"
 keywords = [
   "combinator",
@@ -32,10 +32,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-yaml = ["pyyaml>=6.0"]
 dev = ["pytest-cov>=7.0.0"]
-all = ["kompoz[yaml,dev]"]
-
 
 [build-system]
 requires = ["hatchling"]
@@ -56,5 +53,4 @@ addopts = "-v --tb=short"
 [dependency-groups]
 dev = [
     "pytest-cov>=7.0.0",
-    "pyyaml>=6.0.3",
 ]

@@ -16,6 +16,7 @@ from kompoz import (
     Registry,
     Transform,
     Try,
+    parse_expression,
     pipe,
     pipe_args,
     rule,
@@ -45,7 +46,91 @@ class Data:
 
 
 # =============================================================================
-# Basic Predicate Tests
+# Expression Parser Tests
+# =============================================================================
+
+
+class TestExpressionParser:
+    """Test the expression DSL parser."""
+
+    def test_simple_rule(self) -> None:
+        assert parse_expression("is_admin") == "is_admin"
+
+    def test_and_symbol(self) -> None:
+        assert parse_expression("a & b") == {"and": ["a", "b"]}
+
+    def test_and_word(self) -> None:
+        assert parse_expression("a AND b") == {"and": ["a", "b"]}
+
+    def test_or_symbol(self) -> None:
+        assert parse_expression("a | b") == {"or": ["a", "b"]}
+
+    def test_or_word(self) -> None:
+        assert parse_expression("a OR b") == {"or": ["a", "b"]}
+
+    def test_not_tilde(self) -> None:
+        assert parse_expression("~a") == {"not": "a"}
+
+    def test_not_exclaim(self) -> None:
+        assert parse_expression("!a") == {"not": "a"}
+
+    def test_not_word(self) -> None:
+        assert parse_expression("NOT a") == {"not": "a"}
+
+    def test_parameterized_rule(self) -> None:
+        assert parse_expression("older_than(30)") == {"older_than": [30]}
+
+    def test_multiple_args(self) -> None:
+        assert parse_expression("in_range(10, 20)") == {"in_range": [10, 20]}
+
+    def test_string_arg(self) -> None:
+        assert parse_expression('has_role("admin")') == {"has_role": ["admin"]}
+
+    def test_grouping(self) -> None:
+        assert parse_expression("(a | b) & c") == {"and": [{"or": ["a", "b"]}, "c"]}
+
+    def test_precedence_and_over_or(self) -> None:
+        # AND binds tighter than OR
+        assert parse_expression("a | b & c") == {"or": ["a", {"and": ["b", "c"]}]}
+
+    def test_precedence_not_highest(self) -> None:
+        # NOT binds tightest
+        assert parse_expression("~a & b") == {"and": [{"not": "a"}, "b"]}
+
+    def test_multiline(self) -> None:
+        result = parse_expression("""
+            a
+            & b
+            & c
+        """)
+        assert result == {"and": ["a", "b", "c"]}
+
+    def test_comments(self) -> None:
+        result = parse_expression("""
+            a  # comment
+            & b  # another
+        """)
+        assert result == {"and": ["a", "b"]}
+
+    def test_mixed_operators(self) -> None:
+        result = parse_expression("a AND b OR c")
+        # AND binds tighter: (a AND b) OR c
+        assert result == {"or": [{"and": ["a", "b"]}, "c"]}
+
+    def test_complex_expression(self) -> None:
+        result = parse_expression("a | (b & ~c & d(30))")
+        assert result == {"or": ["a", {"and": ["b", {"not": "c"}, {"d": [30]}]}]}
+
+    def test_chained_not(self) -> None:
+        assert parse_expression("~~a") == {"not": {"not": "a"}}
+
+    def test_float_arg(self) -> None:
+        assert parse_expression("threshold(3.14)") == {"threshold": [3.14]}
+
+    def test_negative_number(self) -> None:
+        assert parse_expression("below(-10)") == {"below": [-10]}
+
+
 # =============================================================================
 
 
@@ -291,8 +376,8 @@ class TestRegistry:
             return u.credit_score > score
 
         @reg.predicate
-        def from_country(u: User, countries: list[str]) -> bool:
-            return u.country in countries
+        def from_country(u: User, country: str) -> bool:
+            return u.country == country
 
         return reg
 
@@ -302,37 +387,41 @@ class TestRegistry:
         assert loaded.run(User("User", is_admin=False))[0] is False
 
     def test_load_parameterized_predicate(self, user_registry: Registry[User]) -> None:
-        loaded = user_registry.load({"account_older_than": [30]})
+        loaded = user_registry.load("account_older_than(30)")
         assert loaded.run(User("Old", account_age_days=60))[0] is True
         assert loaded.run(User("New", account_age_days=10))[0] is False
 
-    def test_load_and_config(self, user_registry: Registry[User]) -> None:
-        loaded = user_registry.load({"and": ["is_active", {"not": "is_banned"}]})
+    def test_load_and_expression(self, user_registry: Registry[User]) -> None:
+        loaded = user_registry.load("is_active & ~is_banned")
         assert loaded.run(User("Good", is_active=True, is_banned=False))[0] is True
         assert loaded.run(User("Bad", is_active=True, is_banned=True))[0] is False
 
-    def test_load_or_config(self, user_registry: Registry[User]) -> None:
-        loaded = user_registry.load({"or": ["is_admin", "has_override"]})
+    def test_load_and_word_syntax(self, user_registry: Registry[User]) -> None:
+        loaded = user_registry.load("is_active AND NOT is_banned")
+        assert loaded.run(User("Good", is_active=True, is_banned=False))[0] is True
+        assert loaded.run(User("Bad", is_active=True, is_banned=True))[0] is False
+
+    def test_load_or_expression(self, user_registry: Registry[User]) -> None:
+        loaded = user_registry.load("is_admin | has_override")
         assert loaded.run(User("Admin", is_admin=True))[0] is True
         assert loaded.run(User("Override", has_override=True))[0] is True
         assert loaded.run(User("Normal"))[0] is False
 
-    def test_load_complex_config(self, user_registry: Registry[User]) -> None:
-        config = {
-            "or": [
-                "is_admin",
-                {
-                    "and": [
-                        "is_active",
-                        {"not": "is_banned"},
-                        {"account_older_than": [30]},
-                        {"from_country": [["US", "NL", "BE"]]},
-                        {"or": [{"credit_above": [650]}, "has_override"]},
-                    ]
-                },
-            ]
-        }
-        loaded = user_registry.load(config)
+    def test_load_or_word_syntax(self, user_registry: Registry[User]) -> None:
+        loaded = user_registry.load("is_admin OR has_override")
+        assert loaded.run(User("Admin", is_admin=True))[0] is True
+        assert loaded.run(User("Override", has_override=True))[0] is True
+        assert loaded.run(User("Normal"))[0] is False
+
+    def test_load_complex_expression(self, user_registry: Registry[User]) -> None:
+        loaded = user_registry.load("""
+            is_admin | (
+                is_active
+                & ~is_banned
+                & account_older_than(30)
+                & (credit_above(650) | has_override)
+            )
+        """)
 
         # Should pass
         assert loaded.run(User("Admin", is_admin=True))[0] is True
@@ -358,18 +447,15 @@ class TestRegistry:
             loaded.run(User("LowCredit", account_age_days=60, credit_score=500))[0]
             is False
         )
-        assert (
-            loaded.run(
-                User(
-                    "WrongCountry", account_age_days=60, credit_score=700, country="DE"
-                )
-            )[0]
-            is False
-        )
 
-    def test_load_empty_and(self, user_registry: Registry[User]) -> None:
-        loaded = user_registry.load({"and": []})
-        assert loaded.run(User("Anyone"))[0] is True  # Always
+    def test_load_multiline_with_comments(self, user_registry: Registry[User]) -> None:
+        loaded = user_registry.load("""
+            is_admin           # admin always passes
+            | is_active        # or active user
+            & ~is_banned       # who is not banned
+        """)
+        assert loaded.run(User("Admin", is_admin=True))[0] is True
+        assert loaded.run(User("Active", is_active=True, is_banned=False))[0] is True
 
     def test_unknown_predicate_raises(self, user_registry: Registry[User]) -> None:
         with pytest.raises(ValueError, match="Unknown predicate"):
@@ -407,13 +493,13 @@ class TestTransformPipeline:
         return reg
 
     def test_simple_transform_chain(self, data_registry: Registry[Data]) -> None:
-        loaded = data_registry.load({"and": ["double", {"add": [10]}]})
+        loaded = data_registry.load("double & add(10)")
         ok, result = loaded.run(Data(5))
         assert ok is True
         assert result.value == 20  # (5 * 2) + 10
 
     def test_transform_with_predicate(self, data_registry: Registry[Data]) -> None:
-        loaded = data_registry.load({"and": ["is_positive", "double"]})
+        loaded = data_registry.load("is_positive & double")
 
         ok, result = loaded.run(Data(5))
         assert ok is True

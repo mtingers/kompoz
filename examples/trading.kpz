@@ -1,0 +1,11 @@
+# Trading Permission Rules
+# Load with: reg.load_file("trading.kpz")
+
+# Can trade if:
+#   - Admin (always allowed)
+#   - OR premium user with good standing
+#   - OR regular user with excellent credit
+
+is_admin
+| (is_premium & is_active & ~is_banned)
+| (is_active & ~is_banned & account_older_than(90) & credit_above(750))

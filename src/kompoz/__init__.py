@@ -3,7 +3,7 @@ Kompoz - Composable Predicate & Transform Combinators
 
 A Python library for building composable, declarative rule chains using
 operator overloading. Supports boolean logic (AND, OR, NOT), data pipelines,
-and config-driven rules via JSON/YAML.
+and config-driven rules via custom DSL.
 
 Operators:
     &  = "and then" (sequence, short-circuits on failure)
@@ -48,6 +48,8 @@ __all__ = [
     "Never",
     "Debug",
     "Registry",
+    "parse_expression",
+    "ExpressionParser",
     "rule",
     "rule_args",
     "pipe",
@@ -395,15 +397,314 @@ class Debug(Combinator[T]):
 
 
 # =============================================================================
-# Registry & Config Loader
+# Registry & Expression Parser
 # =============================================================================
+
+
+class ExpressionParser:
+    """
+    Parser for human-readable rule expressions.
+
+    Supports two equivalent syntaxes:
+        Symbol style:  is_admin & ~is_banned & account_older_than(30)
+        Word style:    is_admin AND NOT is_banned AND account_older_than(30)
+
+    Operators (by precedence, lowest to highest):
+        |, OR       - Any must pass (lowest precedence)
+        &, AND      - All must pass
+        ~, NOT, !   - Invert result (highest precedence)
+
+    Grouping:
+        ( )         - Override precedence
+
+    Rules:
+        rule_name                   - Simple rule
+        rule_name(arg)              - Rule with one argument
+        rule_name(arg1, arg2)       - Rule with multiple arguments
+
+    Multi-line expressions are supported (newlines are ignored).
+
+    Examples:
+        is_admin & is_active
+        is_admin AND is_active
+        is_admin | is_premium
+        is_admin OR is_premium
+        ~is_banned
+        NOT is_banned
+        is_admin & (is_active | is_premium)
+        account_older_than(30) & credit_above(700)
+
+        # Multi-line
+        is_admin
+        & ~is_banned
+        & account_older_than(30)
+    """
+
+    # Token types
+    AND = "AND"
+    OR = "OR"
+    NOT = "NOT"
+    LPAREN = "LPAREN"
+    RPAREN = "RPAREN"
+    COMMA = "COMMA"
+    IDENT = "IDENT"
+    NUMBER = "NUMBER"
+    STRING = "STRING"
+    EOF = "EOF"
+
+    def __init__(self, text: str):
+        self.text = text
+        self.pos = 0
+        self.tokens: list[tuple[str, Any]] = []
+        self.token_pos = 0
+        self._tokenize()
+
+    def _tokenize(self) -> None:
+        """Convert text into tokens."""
+        while self.pos < len(self.text):
+            ch = self.text[self.pos]
+
+            # Skip whitespace and newlines
+            if ch in " \t\n\r":
+                self.pos += 1
+                continue
+
+            # Skip comments
+            if ch == "#":
+                while self.pos < len(self.text) and self.text[self.pos] != "\n":
+                    self.pos += 1
+                continue
+
+            # Operators
+            if ch == "&":
+                self.tokens.append((self.AND, "&"))
+                self.pos += 1
+            elif ch == "|":
+                self.tokens.append((self.OR, "|"))
+                self.pos += 1
+            elif ch in "~!":
+                self.tokens.append((self.NOT, ch))
+                self.pos += 1
+            elif ch == "(":
+                self.tokens.append((self.LPAREN, "("))
+                self.pos += 1
+            elif ch == ")":
+                self.tokens.append((self.RPAREN, ")"))
+                self.pos += 1
+            elif ch == ",":
+                self.tokens.append((self.COMMA, ","))
+                self.pos += 1
+
+            # Strings
+            elif ch in "\"'":
+                self.tokens.append((self.STRING, self._read_string(ch)))
+
+            # Numbers
+            elif ch.isdigit() or (
+                ch == "-"
+                and self.pos + 1 < len(self.text)
+                and self.text[self.pos + 1].isdigit()
+            ):
+                self.tokens.append((self.NUMBER, self._read_number()))
+
+            # Identifiers and keywords
+            elif ch.isalpha() or ch == "_":
+                ident = self._read_ident()
+                upper = ident.upper()
+                if upper == "AND":
+                    self.tokens.append((self.AND, ident))
+                elif upper == "OR":
+                    self.tokens.append((self.OR, ident))
+                elif upper == "NOT":
+                    self.tokens.append((self.NOT, ident))
+                else:
+                    self.tokens.append((self.IDENT, ident))
+
+            else:
+                raise ValueError(f"Unexpected character: {ch!r} at position {self.pos}")
+
+        self.tokens.append((self.EOF, None))
+
+    def _read_string(self, quote: str) -> str:
+        """Read a quoted string."""
+        self.pos += 1  # skip opening quote
+        start = self.pos
+        while self.pos < len(self.text) and self.text[self.pos] != quote:
+            if self.text[self.pos] == "\\":
+                self.pos += 2  # skip escape
+            else:
+                self.pos += 1
+        result = self.text[start : self.pos]
+        self.pos += 1  # skip closing quote
+        return result
+
+    def _read_number(self) -> int | float:
+        """Read a number."""
+        start = self.pos
+        if self.text[self.pos] == "-":
+            self.pos += 1
+        while self.pos < len(self.text) and (
+            self.text[self.pos].isdigit() or self.text[self.pos] == "."
+        ):
+            self.pos += 1
+        text = self.text[start : self.pos]
+        return float(text) if "." in text else int(text)
+
+    def _read_ident(self) -> str:
+        """Read an identifier."""
+        start = self.pos
+        while self.pos < len(self.text) and (
+            self.text[self.pos].isalnum() or self.text[self.pos] == "_"
+        ):
+            self.pos += 1
+        return self.text[start : self.pos]
+
+    def _peek(self) -> tuple[str, Any]:
+        """Look at current token without consuming."""
+        return self.tokens[self.token_pos]
+
+    def _consume(self) -> tuple[str, Any]:
+        """Consume and return current token."""
+        token = self.tokens[self.token_pos]
+        self.token_pos += 1
+        return token
+
+    def _expect(self, token_type: str) -> tuple[str, Any]:
+        """Consume token and verify its type."""
+        token = self._consume()
+        if token[0] != token_type:
+            raise ValueError(f"Expected {token_type}, got {token[0]}")
+        return token
+
+    def parse(self) -> dict | str:
+        """
+        Parse expression and return config dict.
+
+        Grammar:
+            expr     = or_expr
+            or_expr  = and_expr (('|' | 'OR') and_expr)*
+            and_expr = not_expr (('&' | 'AND') not_expr)*
+            not_expr = ('~' | 'NOT' | '!')? primary
+            primary  = IDENT args? | '(' expr ')'
+            args     = '(' arg_list? ')'
+            arg_list = arg (',' arg)*
+            arg      = NUMBER | STRING | IDENT
+        """
+        result = self._parse_or()
+        if self._peek()[0] != self.EOF:
+            raise ValueError(f"Unexpected token: {self._peek()}")
+        return result
+
+    def _parse_or(self) -> dict | str:
+        """Parse OR expression (lowest precedence)."""
+        left = self._parse_and()
+
+        items = [left]
+        while self._peek()[0] == self.OR:
+            self._consume()
+            items.append(self._parse_and())
+
+        if len(items) == 1:
+            return items[0]
+        return {"or": items}
+
+    def _parse_and(self) -> dict | str:
+        """Parse AND expression."""
+        left = self._parse_not()
+
+        items = [left]
+        while self._peek()[0] == self.AND:
+            self._consume()
+            items.append(self._parse_not())
+
+        if len(items) == 1:
+            return items[0]
+        return {"and": items}
+
+    def _parse_not(self) -> dict | str:
+        """Parse NOT expression (highest precedence)."""
+        if self._peek()[0] == self.NOT:
+            self._consume()
+            inner = self._parse_not()  # Allow chained NOT
+            return {"not": inner}
+        return self._parse_primary()
+
+    def _parse_primary(self) -> dict | str:
+        """Parse primary expression (identifier or grouped expr)."""
+        token = self._peek()
+
+        if token[0] == self.LPAREN:
+            self._consume()
+            expr = self._parse_or()
+            self._expect(self.RPAREN)
+            return expr
+
+        if token[0] == self.IDENT:
+            name = self._consume()[1]
+
+            # Check for arguments
+            if self._peek()[0] == self.LPAREN:
+                self._consume()  # (
+                args = self._parse_args()
+                self._expect(self.RPAREN)
+                return {name: args}
+
+            return name
+
+        raise ValueError(f"Unexpected token: {token}")
+
+    def _parse_args(self) -> list:
+        """Parse argument list."""
+        args = []
+
+        if self._peek()[0] == self.RPAREN:
+            return args
+
+        args.append(self._parse_arg())
+
+        while self._peek()[0] == self.COMMA:
+            self._consume()
+            args.append(self._parse_arg())
+
+        return args
+
+    def _parse_arg(self) -> Any:
+        """Parse single argument."""
+        token = self._peek()
+
+        if token[0] == self.NUMBER:
+            return self._consume()[1]
+        if token[0] == self.STRING:
+            return self._consume()[1]
+        if token[0] == self.IDENT:
+            # Treat bare identifiers as strings
+            return self._consume()[1]
+
+        raise ValueError(f"Invalid argument: {token}")
+
+
+def parse_expression(text: str) -> dict | str:
+    """
+    Parse a rule expression into a config structure.
+
+    Args:
+        text: Expression string like "is_admin & ~is_banned"
+
+    Returns:
+        Config dict compatible with Registry.load()
+
+    Example:
+        >>> parse_expression("is_admin & ~is_banned")
+        {'and': ['is_admin', {'not': 'is_banned'}]}
+    """
+    return ExpressionParser(text).parse()
 
 
 class Registry(Generic[T]):
     """
     Registry for named predicates and transforms.
 
-    Allows loading combinator chains from JSON/YAML config files.
+    Allows loading combinator chains from human-readable expressions.
 
     Example:
         reg: Registry[User] = Registry()
@@ -416,8 +717,11 @@ class Registry(Generic[T]):
         def older_than(u: User, days: int) -> bool:
             return u.age > days
 
-        # Load from config
-        rule = reg.load({"or": ["is_admin", {"older_than": [30]}]})
+        # Load from expression
+        loaded = reg.load("is_admin & older_than(30)")
+
+        # Also supports word syntax
+        loaded = reg.load("is_admin AND older_than(30)")
     """
 
     def __init__(self) -> None:
@@ -460,67 +764,62 @@ class Registry(Generic[T]):
             self._transforms[fn.__name__] = factory
             return factory
 
-    def load(self, config: dict | list | str) -> Combinator[T]:
+    def load(self, expr: str) -> Combinator[T]:
         """
-        Load a combinator chain from a config structure.
+        Load a combinator chain from a human-readable expression.
 
-        Config format:
-            # Simple predicate (no args)
-            "is_admin"
+        Expression format:
+            # Simple rules
+            is_admin
+            is_active
 
-            # Parameterized predicate
-            {"older_than": [30]}
-            {"older_than": {"days": 30}}
+            # Operators (symbols or words)
+            is_admin & is_active          # AND
+            is_admin AND is_active        # AND (same as &)
+            is_admin | is_premium         # OR
+            is_admin OR is_premium        # OR (same as |)
+            ~is_banned                    # NOT
+            NOT is_banned                 # NOT (same as ~)
+            !is_banned                    # NOT (same as ~)
 
-            # AND (all must pass)
-            {"and": ["is_active", "is_admin"]}
+            # Grouping with parentheses
+            is_admin | (is_active & ~is_banned)
 
-            # OR (any must pass)
-            {"or": ["is_admin", {"and": ["is_active", {"older_than": [30]}]}]}
+            # Parameterized rules
+            account_older_than(30)
+            credit_above(700)
+            in_role("admin", "moderator")
 
-            # NOT
-            {"not": "is_banned"}
+            # Multi-line (newlines are ignored)
+            is_admin
+            & is_active
+            & ~is_banned
+            & account_older_than(30)
 
-            # Sequence (transform chain)
-            {"seq": ["parse_int", "double", "stringify"]}
+            # Comments
+            is_admin  # must be admin
+            & ~is_banned  # and not banned
 
-            # Fallback (try until one succeeds)
-            {"fallback": ["fetch_primary", "fetch_cache"]}
+        Operator precedence (lowest to highest):
+            OR  (|)  - evaluated last
+            AND (&)  - evaluated second
+            NOT (~)  - evaluated first
         """
-        return self._parse(config)
+        config = parse_expression(expr)
+        return self._build(config)
 
     def load_file(self, path: str) -> Combinator[T]:
-        """Load combinator chain from a JSON or YAML file."""
-        import json
+        """Load combinator chain from an expression file."""
         from pathlib import Path
 
-        p = Path(path)
-        content = p.read_text()
+        content = Path(path).read_text()
+        return self.load(content)
 
-        if p.suffix in (".yaml", ".yml"):
-            try:
-                import yaml
-
-                config = yaml.safe_load(content)
-            except ImportError as e:
-                raise ImportError(
-                    "PyYAML required for YAML files: pip install pyyaml"
-                ) from e
-        else:
-            config = json.loads(content)
-
-        return self.load(config)
-
-    def _parse(self, node: dict | list | str) -> Combinator[T]:
+    def _build(self, node: dict | str) -> Combinator[T]:
+        """Build a combinator from a parsed expression config."""
         # String: simple predicate or transform reference
         if isinstance(node, str):
             return self._resolve(node)
-
-        # List: implicit AND
-        if isinstance(node, list):
-            if not node:
-                return Always()
-            return self._combine_and([self._parse(item) for item in node])
 
         # Dict: operator or parameterized call
         if isinstance(node, dict):
@@ -531,23 +830,15 @@ class Registry(Generic[T]):
 
             # Operators
             if key == "and":
-                items = [self._parse(item) for item in value]
+                items = [self._build(item) for item in value]
                 return self._combine_and(items)
 
             elif key == "or":
-                items = [self._parse(item) for item in value]
+                items = [self._build(item) for item in value]
                 return self._combine_or(items)
 
             elif key == "not":
-                return ~self._parse(value)
-
-            elif key == "seq":
-                items = [self._parse(item) for item in value]
-                return self._combine_seq(items)
-
-            elif key == "fallback":
-                items = [self._parse(item) for item in value]
-                return self._combine_or(items)
+                return ~self._build(value)
 
             # Parameterized predicate/transform
             else:

@@ -1,36 +1,5 @@
 # Kompoz
 
-<!--toc:start-->
-
-- [Kompoz](#kompoz)
-  - [Features](#features)
-  - [Installation](#installation)
-  - [Quick Start](#quick-start)
-    - [1. Define Rules](#1-define-rules)
-    - [2. Compose Rules](#2-compose-rules)
-    - [3. Run Rules](#3-run-rules)
-  - [Operators](#operators)
-  - [Transforms (Data Pipelines)](#transforms-data-pipelines)
-  - [Config-Driven Rules (JSON/YAML)](#config-driven-rules-jsonyaml)
-    - [Using Registry](#using-registry)
-    - [YAML Config](#yaml-config)
-    - [JSON Config](#json-config)
-  - [Config Syntax Reference](#config-syntax-reference)
-  - [Type Hints](#type-hints)
-  - [Testing](#testing)
-  - [Use Cases](#use-cases)
-    - [Access Control](#access-control)
-    - [Form Validation](#form-validation)
-    - [Data Pipeline with Fallbacks](#data-pipeline-with-fallbacks)
-    - [Feature Flags](#feature-flags)
-  - [API Reference](#api-reference)
-    - [Core Classes](#core-classes)
-    - [Decorators](#decorators)
-    - [Utility Combinators](#utility-combinators)
-  - [Contributing](#contributing)
-  - [License](#license)
-          <!--toc:end-->
-
 **Composable Predicate & Transform Combinators for Python**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -58,19 +27,14 @@ class User:
 def is_admin(user):
     return user.is_admin
 
-
 @rule
 def is_active(user):
     return user.is_active
-
 
 @rule_args
 def account_older_than(user, days):
     return user.account_age_days > days
 
-
-user = User(name="foo", is_admin=False, account_age_days=1000)
-#
 # Combine with operators - reads like English!
 can_access = is_admin | (is_active & account_older_than(30))
 
@@ -83,17 +47,14 @@ ok, _ = can_access.run(user)
 - **Operator Overloading**: Use `&` (and), `|` (or), `~` (not) for intuitive composition
 - **Decorator Syntax**: Clean `@rule` and `@rule_args` decorators
 - **Parameterized Rules**: `account_older_than(30)` creates reusable predicates
-- **Config-Driven**: Load rules from JSON/YAML files
+- **Expression DSL**: Human-readable rule expressions with AND/OR/NOT
 - **Type Hints**: Full typing support with generics
-- **Zero Dependencies**: Core library has no external dependencies (YAML support optional)
+- **Zero Dependencies**: Core library has no external dependencies
 
 ## Installation
 
 ```bash
 pip install kompoz
-
-# With YAML support
-pip install kompoz[yaml]
 ```
 
 ## Quick Start
@@ -169,48 +130,41 @@ print(f"Access: {'granted' if ok else 'denied'}")
 ```python
 from kompoz import pipe, pipe_args, rule
 
-
 @pipe
 def parse_int(data):
     return int(data)
-
 
 @pipe
 def double(data):
     return data * 2
 
-
 @pipe_args
 def add(data, n):
     return data + n
-
 
 @rule
 def is_positive(data):
     return data > 0
 
-
 # Build a pipeline
 pipeline = parse_int & is_positive & double & add(10)
 
-ok, result = pipeline.run(21)
+ok, result = pipeline.run("21")
 # ok=True, result=52  (21 * 2 + 10)
-print(ok, result)
 
-ok, result = pipeline.run(-5)
-print(ok, result)
+ok, result = pipeline.run("-5")
 # ok=False, result=-5  (stopped at is_positive)
 ```
 
-## Config-Driven Rules (JSON/YAML)
+## Expression DSL
 
-### Using Registry
+Load rules from human-readable expressions instead of code:
+
+### Basic Syntax
 
 ```python
-from dataclasses import dataclass
-
 from kompoz import Registry
-
+from dataclasses import dataclass
 
 @dataclass
 class User:
@@ -219,132 +173,152 @@ class User:
     is_banned: bool = False
     account_age_days: int = 0
 
-
 # Create registry and register predicates
 reg = Registry[User]()
-
 
 @reg.predicate
 def is_admin(u):
     return u.is_admin
 
-
 @reg.predicate
 def is_active(u):
     return u.is_active
-
 
 @reg.predicate
 def is_banned(u):
     return u.is_banned
 
-
 @reg.predicate
 def account_older_than(u, days):
     return u.account_age_days > days
 
-
-# Load rules from config
-rule = reg.load(
-    {
-        "or": [
-            "is_admin",
-            {"and": ["is_active", {"not": "is_banned"}, {"account_older_than": [30]}]},
-        ]
-    }
-)
-
-# Use the rule
-ok, foo = rule.run(User(account_age_days=60))
-print(ok, foo)
+# Load rules from expressions
+loaded = reg.load("is_admin & is_active")
+loaded = reg.load("is_admin AND is_active")  # same thing
 ```
 
-### YAML Config
+### Expression Operators
 
-```yaml
-# rules.yaml
-or:
-    - is_admin
-    - and:
-          - is_active
-          - not: is_banned
-          - account_older_than: [30]
-          - or:
-                - credit_above: [650]
-                - has_override
+Both symbol and word syntax are supported:
+
+| Symbol | Word  | Meaning                  |
+| ------ | ----- | ------------------------ |
+| `&`    | `AND` | All conditions must pass |
+| `\|`   | `OR`  | Any condition must pass  |
+| `~`    | `NOT` | Invert the condition     |
+| `!`    | `NOT` | Invert (alias)           |
+| `()`   |       | Grouping                 |
+
+### Examples
+
+```python
+# Simple rules
+loaded = reg.load("is_admin")
+loaded = reg.load("is_active")
+
+# AND - all must pass
+loaded = reg.load("is_admin & is_active")
+loaded = reg.load("is_admin AND is_active")
+
+# OR - any must pass
+loaded = reg.load("is_admin | is_premium")
+loaded = reg.load("is_admin OR is_premium")
+
+# NOT - invert result
+loaded = reg.load("~is_banned")
+loaded = reg.load("NOT is_banned")
+loaded = reg.load("!is_banned")
+
+# Parameterized rules
+loaded = reg.load("account_older_than(30)")
+loaded = reg.load("credit_above(700)")
+
+# Grouping with parentheses
+loaded = reg.load("is_admin | (is_active & ~is_banned)")
+
+# Complex expressions
+loaded = reg.load("""
+    is_admin
+    | (is_active & ~is_banned & account_older_than(30))
+""")
+```
+
+### Multi-line Expressions
+
+Newlines are ignored, so you can format for readability:
+
+```python
+loaded = reg.load("""
+    is_admin
+    & is_active
+    & ~is_banned
+    & account_older_than(30)
+""")
+
+# Comments are supported
+loaded = reg.load("""
+    is_admin           # must be admin
+    & ~is_banned       # and not banned
+    & account_older_than(30)  # with mature account
+""")
+```
+
+### Operator Precedence
+
+From lowest to highest:
+
+1. `OR` / `|` (evaluated last)
+2. `AND` / `&`
+3. `NOT` / `~` / `!` (evaluated first)
+
+```python
+# This expression:
+is_admin | is_active & ~is_banned
+
+# Is parsed as:
+is_admin | (is_active & (~is_banned))
+
+# Use parentheses to override:
+(is_admin | is_active) & ~is_banned
+```
+
+### Load from File
+
+Save expressions in `.kpz` files (Kompoz expression format):
+
+```
+# access_control.kpz
+# Comments are supported
+
+is_admin | (is_active & ~is_banned & account_older_than(30))
 ```
 
 ```python
-rule = reg.load_file("rules.yaml")
+loaded = reg.load_file("access_control.kpz")
 ```
-
-### JSON Config
-
-```json
-{
-    "or": [
-        "is_admin",
-        {
-            "and": [
-                "is_active",
-                { "not": "is_banned" },
-                { "account_older_than": [30] }
-            ]
-        }
-    ]
-}
-```
-
-## Config Syntax Reference
-
-| Python           | JSON                   | YAML               |
-| ---------------- | ---------------------- | ------------------ |
-| `is_admin`       | `"is_admin"`           | `is_admin`         |
-| `older_than(30)` | `{"older_than": [30]}` | `older_than: [30]` |
-| `a & b`          | `{"and": ["a", "b"]}`  | `and: [a, b]`      |
-| `a \| b`         | `{"or": ["a", "b"]}`   | `or: [a, b]`       |
-| `~a`             | `{"not": "a"}`         | `not: a`           |
-| Transform chain  | `{"seq": [...]}`       | `seq: [...]`       |
-| Fallback         | `{"fallback": [...]}`  | `fallback: [...]`  |
 
 ## Type Hints
 
 Kompoz is fully typed. For best results with type checkers like Pyright/mypy, use the correct decorators:
 
 ```python
-from dataclasses import dataclass
-
-from kompoz import Predicate, Registry, rule, rule_args
-
-
-@dataclass
-class User:
-    name: str
-    is_admin: bool = False
-    is_active: bool = True
-    is_banned: bool = False
-    account_age_days: int = 0
-    credit_score: int = 500
-
+from kompoz import rule, rule_args, Predicate, Registry
 
 # Simple rule (single argument) - use @rule
 @rule
 def is_admin(user: User) -> bool:
     return user.is_admin
 
-
 # Parameterized rule (extra arguments) - use @rule_args
 @rule_args
 def older_than(user: User, days: int) -> bool:
     return user.account_age_days > days
-
 
 # For inline Predicates, add explicit type annotation
 is_positive: Predicate[int] = Predicate(lambda x: x > 0, "is_positive")
 
 # Registry should be typed
 reg: Registry[User] = Registry()
-
 ```
 
 The `@rule` decorator returns `Predicate[T]`, while `@rule_args` returns a factory that produces `Predicate[T]`. This separation ensures Pyright can properly infer types.
@@ -433,7 +407,7 @@ show_feature = (
 - **`Predicate[T]`**: Checks a condition, doesn't modify context
 - **`Transform[T]`**: Transforms context, fails on exception
 - **`Try[T]`**: Wraps a function, converts exceptions to failure
-- **`Registry[T]`**: Register and load rules from config
+- **`Registry[T]`**: Register and load rules from expressions
 
 ### Decorators
 
@@ -442,11 +416,36 @@ show_feature = (
 - **`@pipe`**: Create a simple transform (single argument)
 - **`@pipe_args`**: Create a parameterized transform factory (multiple arguments)
 
+### Functions
+
+- **`parse_expression(text)`**: Parse expression string into config dict
+
 ### Utility Combinators
 
 - **`Always()`**: Always succeeds
 - **`Never()`**: Always fails
 - **`Debug(label)`**: Prints context and succeeds
+
+## Examples
+
+The `examples/` directory contains:
+
+| File                    | Description                                       |
+| ----------------------- | ------------------------------------------------- |
+| `rules_example.py`      | Using `@rule` and `@rule_args` decorators         |
+| `transforms_example.py` | Using `@pipe` and `@pipe_args` for data pipelines |
+| `registry_example.py`   | Loading rules from `.kpz` files                   |
+| `access_control.kpz`    | Example access control expression                 |
+| `trading.kpz`           | Example trading permission expression             |
+
+Run examples:
+
+```bash
+cd kompoz
+python examples/rules_example.py
+python examples/transforms_example.py
+python examples/registry_example.py
+```
 
 ## Contributing
 

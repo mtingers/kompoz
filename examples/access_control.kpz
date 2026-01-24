@@ -1,0 +1,10 @@
+# Access Control Rules
+# Load with: reg.load_file("access_control.kpz")
+
+# Admin always has access
+# OR active user who is not banned with a mature account
+is_admin | (
+    is_active
+    & ~is_banned
+    & account_older_than(30)
+)
