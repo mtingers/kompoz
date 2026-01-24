@@ -1,5 +1,40 @@
 # Kompoz
 
+<!--toc:start-->
+
+- [Kompoz](#kompoz)
+  - [Features](#features)
+  - [Installation](#installation)
+  - [Quick Start](#quick-start)
+    - [1. Define Rules](#1-define-rules)
+    - [2. Compose Rules](#2-compose-rules)
+    - [3. Run Rules](#3-run-rules)
+  - [Operators](#operators)
+  - [Transforms (Data Pipelines)](#transforms-data-pipelines)
+  - [Expression DSL](#expression-dsl)
+    - [Basic Syntax](#basic-syntax)
+    - [Expression Operators](#expression-operators)
+    - [Examples](#examples)
+    - [Multi-line Expressions](#multi-line-expressions)
+    - [Operator Precedence](#operator-precedence)
+    - [Load from File](#load-from-file)
+  - [Type Hints](#type-hints)
+  - [Testing](#testing)
+  - [Use Cases](#use-cases)
+    - [Access Control](#access-control)
+    - [Form Validation](#form-validation)
+    - [Data Pipeline with Fallbacks](#data-pipeline-with-fallbacks)
+    - [Feature Flags](#feature-flags)
+  - [API Reference](#api-reference)
+    - [Core Classes](#core-classes)
+    - [Decorators](#decorators)
+    - [Functions](#functions)
+    - [Utility Combinators](#utility-combinators)
+  - [Examples](#examples-1)
+  - [Contributing](#contributing)
+  - [License](#license)
+      <!--toc:end-->
+
 **Composable Predicate & Transform Combinators for Python**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
