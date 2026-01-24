@@ -1,0 +1,28 @@
+# Kompoz Example - Data Pipeline
+# ===============================
+#
+# This configuration defines a data transformation pipeline.
+# Equivalent Python code:
+#
+#   (parse_int | set_default(0)) & is_positive & double & add(10) & stringify
+#
+# The pipeline:
+# 1. Try to parse as int, use 0 as fallback
+# 2. Validate that value is positive
+# 3. Double the value
+# 4. Add 10
+# 5. Convert to string
+
+and:
+  # Try parsing, fall back to default(0) if it fails
+  - fallback:
+      - parse_int
+      - set_default: [0]
+
+  # Must be positive to continue
+  - is_positive
+
+  # Transform chain
+  - double
+  - add: [10]
+  - stringify

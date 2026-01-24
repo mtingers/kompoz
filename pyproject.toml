@@ -1,0 +1,51 @@
+[project]
+name = "kompoz"
+version = "0.1.0"
+description = "Composable predicate and transform combinators with operator overloading"
+license = "MIT"
+readme = "README.md"
+authors = [{ name = "Matth", email = "matth@mtingers.com" }]
+requires-python = ">=3.10"
+keywords = [
+  "combinator",
+  "predicate",
+  "transform",
+  "validation",
+  "rules",
+  "pipeline",
+  "functional",
+  "declarative",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[dependency-groups]
+dev = ["pytest-cov>=7.0.0"]
