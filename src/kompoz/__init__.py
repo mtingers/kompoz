@@ -62,6 +62,7 @@ __all__ = [
     "TraceConfig",
     "use_tracing",
     "run_traced",
+    "run_async_traced",
     "PrintHook",
     "LoggingHook",
     "OpenTelemetryHook",
@@ -125,6 +126,13 @@ from typing import (
 )
 
 T = TypeVar("T")
+
+# Type aliases for callbacks
+RetryCallback = Callable[[int, Exception | None, float], None]
+"""Callback signature for retry hooks: (attempt, error, delay) -> None"""
+
+AsyncRetryCallback = Callable[[int, Exception | None, float], Any]
+"""Callback signature for async retry hooks: (attempt, error, delay) -> None or Coroutine"""
 
 
 # =============================================================================
@@ -256,6 +264,14 @@ class Predicate(Combinator[T]):
     def __repr__(self) -> str:
         return f"Predicate({self.name})"
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Predicate):
+            return NotImplemented
+        return self.fn == other.fn and self.name == other.name
+
+    def __hash__(self) -> int:
+        return hash((id(self.fn), self.name))
+
 
 class PredicateFactory(Generic[T]):
     """
@@ -329,20 +345,35 @@ class Transform(Combinator[T]):
     Example:
         double: Transform[int] = Transform(lambda x: x * 2, "double")
         ok, result = double.run(5)  # (True, 10)
+
+    Attributes:
+        last_error: The last exception that caused failure (if any)
     """
 
     def __init__(self, fn: Callable[[T], T], name: str | None = None):
         self.fn = fn
         self.name = name or getattr(fn, "__name__", "transform")
+        self.last_error: Exception | None = None
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
         try:
-            return True, self.fn(ctx)
-        except Exception:
+            result = self.fn(ctx)
+            self.last_error = None
+            return True, result
+        except Exception as e:
+            self.last_error = e
             return False, ctx
 
     def __repr__(self) -> str:
         return f"Transform({self.name})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Transform):
+            return NotImplemented
+        return self.fn == other.fn and self.name == other.name
+
+    def __hash__(self) -> int:
+        return hash((id(self.fn), self.name))
 
 
 class TransformFactory(Generic[T]):
@@ -719,6 +750,30 @@ def run_traced(
     return _traced_run(combinator, ctx, hook, config or TraceConfig())
 
 
+async def run_async_traced(
+    combinator: AsyncCombinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig | None = None,
+) -> tuple[bool, T]:
+    """
+    Run an async combinator with explicit tracing.
+
+    Args:
+        combinator: The async combinator to run
+        ctx: Context to evaluate
+        hook: TraceHook to receive events
+        config: Optional TraceConfig
+
+    Returns:
+        Tuple of (success, result_context)
+
+    Example:
+        ok, result = await run_async_traced(async_rule, user, PrintHook())
+    """
+    return await _async_traced_run(combinator, ctx, hook, config or TraceConfig())
+
+
 # =============================================================================
 # Built-in Trace Hooks
 # =============================================================================
@@ -1027,6 +1082,10 @@ class ValidatingCombinator(Combinator[T]):
         """Override | to create validating OR."""
         return _ValidatingOr(self, other)
 
+    def __invert__(self) -> ValidatingCombinator[T]:
+        """Override ~ to create validating NOT."""
+        return _ValidatingNot(self)
+
 
 class ValidatingPredicate(ValidatingCombinator[T]):
     """
@@ -1154,6 +1213,43 @@ class _ValidatingOr(ValidatingCombinator[T]):
                 errors=[f"Check failed: {_get_combinator_name(self.right)}"],
                 ctx=result,
             )
+
+
+class _ValidatingNot(ValidatingCombinator[T]):
+    """NOT combinator for validation - inverts the result."""
+
+    def __init__(self, inner: Combinator[T], error: str | None = None):
+        self.inner = inner
+        self._error = error
+
+    def _execute(self, ctx: T) -> tuple[bool, T]:
+        ok, ctx = self.inner._execute(ctx)
+        return not ok, ctx
+
+    def validate(self, ctx: T) -> ValidationResult:
+        """Validate - inverts the inner result."""
+        if isinstance(self.inner, ValidatingCombinator):
+            inner_result = self.inner.validate(ctx)
+            # Invert: if inner passed, we fail; if inner failed, we pass
+            if inner_result.ok:
+                # Inner passed, so NOT fails
+                error_msg = self._error or "NOT condition failed (inner passed)"
+                return ValidationResult(
+                    ok=False, errors=[error_msg], ctx=inner_result.ctx
+                )
+            else:
+                # Inner failed, so NOT passes
+                return ValidationResult(ok=True, errors=[], ctx=inner_result.ctx)
+        else:
+            ok, result = self.inner._execute(ctx)
+            if ok:
+                # Inner passed, so NOT fails
+                error_msg = (
+                    self._error or f"NOT {_get_combinator_name(self.inner)} failed"
+                )
+                return ValidationResult(ok=False, errors=[error_msg], ctx=result)
+            else:
+                return ValidationResult(ok=True, errors=[], ctx=result)
 
 
 @overload
@@ -1301,12 +1397,27 @@ class AsyncCombinator(ABC, Generic[T]):
     Base class for async combinators.
 
     Similar to Combinator but uses async/await.
+    Supports tracing via use_tracing() context manager.
     """
 
     @abstractmethod
-    async def run(self, ctx: T) -> tuple[bool, T]:
-        """Execute the combinator asynchronously."""
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        """Internal execution - subclasses implement this."""
         ...
+
+    async def run(self, ctx: T) -> tuple[bool, T]:
+        """
+        Execute the combinator asynchronously.
+
+        If tracing is enabled via use_tracing(), this will automatically
+        trace the execution.
+        """
+        hook = _trace_hook.get()
+        if hook is not None:
+            config = _trace_config.get()
+            return await _async_traced_run(self, ctx, hook, config, depth=0)
+
+        return await self._execute(ctx)
 
     def __and__(self, other: AsyncCombinator[T]) -> AsyncCombinator[T]:
         return _AsyncAnd(self, other)
@@ -1324,16 +1435,112 @@ class AsyncCombinator(ABC, Generic[T]):
         return await self.run(ctx)
 
 
+def _get_async_combinator_name(combinator: AsyncCombinator) -> str:
+    """Get a human-readable name for an async combinator."""
+    if isinstance(combinator, AsyncPredicate):
+        return f"AsyncPredicate({combinator.name})"
+    if isinstance(combinator, AsyncTransform):
+        return f"AsyncTransform({combinator.name})"
+    if isinstance(combinator, _AsyncAnd):
+        return "AsyncAND"
+    if isinstance(combinator, _AsyncOr):
+        return "AsyncOR"
+    if isinstance(combinator, _AsyncNot):
+        return "AsyncNOT"
+    if isinstance(combinator, _AsyncThen):
+        return "AsyncTHEN"
+    return repr(combinator)
+
+
+async def _async_traced_run(
+    combinator: AsyncCombinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig,
+    depth: int = 0,
+) -> tuple[bool, T]:
+    """Execute an async combinator with tracing."""
+
+    # Check depth limit
+    if config.max_depth is not None and depth > config.max_depth:
+        return await combinator._execute(ctx)
+
+    name = _get_async_combinator_name(combinator)
+    is_composite = isinstance(combinator, (_AsyncAnd, _AsyncOr, _AsyncNot, _AsyncThen))
+
+    # Skip composite combinators if leaf_only mode
+    if config.include_leaf_only and is_composite:
+        if config.nested:
+            return await _async_traced_run_inner(combinator, ctx, hook, config, depth)
+        return await combinator._execute(ctx)
+
+    # Call on_enter
+    span = hook.on_enter(name, ctx, depth)
+    start = time.perf_counter()
+
+    try:
+        if config.nested and is_composite:
+            ok, result = await _async_traced_run_inner(
+                combinator, ctx, hook, config, depth
+            )
+        else:
+            ok, result = await combinator._execute(ctx)
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        hook.on_exit(span, name, ok, duration_ms, depth)
+        return ok, result
+
+    except Exception as e:
+        duration_ms = (time.perf_counter() - start) * 1000
+        hook.on_error(span, name, e, duration_ms, depth)
+        raise
+
+
+async def _async_traced_run_inner(
+    combinator: AsyncCombinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig,
+    depth: int,
+) -> tuple[bool, T]:
+    """Handle tracing for composite async combinators."""
+
+    if isinstance(combinator, _AsyncAnd):
+        ok, ctx = await _async_traced_run(combinator.left, ctx, hook, config, depth + 1)
+        if not ok:
+            return False, ctx
+        return await _async_traced_run(combinator.right, ctx, hook, config, depth + 1)
+
+    if isinstance(combinator, _AsyncOr):
+        ok, ctx = await _async_traced_run(combinator.left, ctx, hook, config, depth + 1)
+        if ok:
+            return True, ctx
+        return await _async_traced_run(combinator.right, ctx, hook, config, depth + 1)
+
+    if isinstance(combinator, _AsyncNot):
+        ok, result = await _async_traced_run(
+            combinator.inner, ctx, hook, config, depth + 1
+        )
+        return not ok, result
+
+    if isinstance(combinator, _AsyncThen):
+        _, ctx = await _async_traced_run(combinator.left, ctx, hook, config, depth + 1)
+        return await _async_traced_run(combinator.right, ctx, hook, config, depth + 1)
+
+    # Fallback
+    return await combinator._execute(ctx)
+
+
 @dataclass
 class _AsyncAnd(AsyncCombinator[T]):
     left: AsyncCombinator[T]
     right: AsyncCombinator[T]
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = await self.left.run(ctx)
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        ok, ctx = await self.left._execute(ctx)
         if not ok:
             return False, ctx
-        return await self.right.run(ctx)
+        return await self.right._execute(ctx)
 
 
 @dataclass
@@ -1341,19 +1548,19 @@ class _AsyncOr(AsyncCombinator[T]):
     left: AsyncCombinator[T]
     right: AsyncCombinator[T]
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = await self.left.run(ctx)
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        ok, ctx = await self.left._execute(ctx)
         if ok:
             return True, ctx
-        return await self.right.run(ctx)
+        return await self.right._execute(ctx)
 
 
 @dataclass
 class _AsyncNot(AsyncCombinator[T]):
     inner: AsyncCombinator[T]
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = await self.inner.run(ctx)
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        ok, ctx = await self.inner._execute(ctx)
         return not ok, ctx
 
 
@@ -1362,9 +1569,9 @@ class _AsyncThen(AsyncCombinator[T]):
     left: AsyncCombinator[T]
     right: AsyncCombinator[T]
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
-        _, ctx = await self.left.run(ctx)
-        return await self.right.run(ctx)
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        _, ctx = await self.left._execute(ctx)
+        return await self.right._execute(ctx)
 
 
 class AsyncPredicate(AsyncCombinator[T]):
@@ -1381,7 +1588,7 @@ class AsyncPredicate(AsyncCombinator[T]):
         self.fn = fn
         self.name = name or getattr(fn, "__name__", "async_predicate")
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
         result = await self.fn(ctx)
         return bool(result), ctx
 
@@ -1414,17 +1621,23 @@ class AsyncTransform(AsyncCombinator[T]):
         async def fetch_profile(user):
             user.profile = await api.get_profile(user.id)
             return user
+
+    Attributes:
+        last_error: The last exception that caused failure (if any)
     """
 
     def __init__(self, fn: Callable[[T], Any], name: str | None = None):
         self.fn = fn
         self.name = name or getattr(fn, "__name__", "async_transform")
+        self.last_error: Exception | None = None
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
         try:
             result = await self.fn(ctx)
+            self.last_error = None
             return True, result
-        except Exception:
+        except Exception as e:
+            self.last_error = e
             return False, ctx
 
     def __repr__(self) -> str:
@@ -1653,6 +1866,21 @@ class Retry(Combinator[T]):
 
         # Retry with jitter to avoid thundering herd
         fetch = Retry(fetch_from_api, max_attempts=5, backoff=0.5, jitter=0.1)
+
+        # With observability hook
+        def on_retry(attempt, error, delay):
+            print(f"Retry {attempt}: {error}, waiting {delay}s")
+
+        fetch = Retry(fetch_from_api, max_attempts=3, on_retry=on_retry)
+
+    Args:
+        inner: The combinator or callable to retry
+        max_attempts: Maximum number of attempts (default: 3)
+        backoff: Base delay between retries in seconds (default: 0)
+        exponential: Use exponential backoff (default: False)
+        jitter: Random jitter to add to delay (default: 0)
+        name: Optional name for debugging
+        on_retry: Optional callback(attempt, error, delay) called before each retry
     """
 
     def __init__(
@@ -1663,6 +1891,7 @@ class Retry(Combinator[T]):
         exponential: bool = False,
         jitter: float = 0.0,
         name: str | None = None,
+        on_retry: Callable[[int, Exception | None, float], None] | None = None,
     ):
         if isinstance(inner, Combinator):
             self.inner = inner
@@ -1675,6 +1904,9 @@ class Retry(Combinator[T]):
         self.backoff = backoff
         self.exponential = exponential
         self.jitter = jitter
+        self.on_retry = on_retry
+        self.last_error: Exception | None = None
+        self.attempts_made: int = 0
 
     def _get_delay(self, attempt: int) -> float:
         """Calculate delay for given attempt number."""
@@ -1693,20 +1925,29 @@ class Retry(Combinator[T]):
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
         last_ctx = ctx
+        self.last_error = None
+        self.attempts_made = 0
 
         for attempt in range(self.max_attempts):
+            self.attempts_made = attempt + 1
             try:
                 ok, result = self.inner._execute(last_ctx)
                 if ok:
                     return True, result
                 last_ctx = result
-            except Exception:
+                self.last_error = None
+            except Exception as e:
+                self.last_error = e
                 # Continue to retry on exception
-                pass
 
             # Don't sleep after last attempt
             if attempt < self.max_attempts - 1:
                 delay = self._get_delay(attempt)
+
+                # Call the retry hook if provided
+                if self.on_retry is not None:
+                    self.on_retry(attempt + 1, self.last_error, delay)
+
                 if delay > 0:
                     time.sleep(delay)
 
@@ -1723,6 +1964,21 @@ class AsyncRetry(AsyncCombinator[T]):
     Example:
         fetch = AsyncRetry(fetch_from_api, max_attempts=3, backoff=1.0)
         ok, result = await fetch.run(request)
+
+        # With observability hook
+        async def on_retry(attempt, error, delay):
+            print(f"Retry {attempt}: {error}, waiting {delay}s")
+
+        fetch = AsyncRetry(fetch_from_api, max_attempts=3, on_retry=on_retry)
+
+    Args:
+        inner: The async combinator or callable to retry
+        max_attempts: Maximum number of attempts (default: 3)
+        backoff: Base delay between retries in seconds (default: 0)
+        exponential: Use exponential backoff (default: False)
+        jitter: Random jitter to add to delay (default: 0)
+        name: Optional name for debugging
+        on_retry: Optional async callback(attempt, error, delay) called before each retry
     """
 
     def __init__(
@@ -1733,6 +1989,7 @@ class AsyncRetry(AsyncCombinator[T]):
         exponential: bool = False,
         jitter: float = 0.0,
         name: str | None = None,
+        on_retry: Callable[[int, Exception | None, float], Any] | None = None,
     ):
         if isinstance(inner, AsyncCombinator):
             self.inner = inner
@@ -1745,6 +2002,9 @@ class AsyncRetry(AsyncCombinator[T]):
         self.backoff = backoff
         self.exponential = exponential
         self.jitter = jitter
+        self.on_retry = on_retry
+        self.last_error: Exception | None = None
+        self.attempts_made: int = 0
 
     def _get_delay(self, attempt: int) -> float:
         """Calculate delay for given attempt number."""
@@ -1761,23 +2021,33 @@ class AsyncRetry(AsyncCombinator[T]):
 
         return delay
 
-    async def run(self, ctx: T) -> tuple[bool, T]:
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
         last_ctx = ctx
-        last_error = None
+        self.last_error = None
+        self.attempts_made = 0
 
         for attempt in range(self.max_attempts):
+            self.attempts_made = attempt + 1
             try:
-                ok, result = await self.inner.run(last_ctx)
+                ok, result = await self.inner._execute(last_ctx)
                 if ok:
                     return True, result
                 last_ctx = result
+                self.last_error = None
             except Exception as e:
-                last_error = e
+                self.last_error = e
                 # Continue to retry
 
             # Don't sleep after last attempt
             if attempt < self.max_attempts - 1:
                 delay = self._get_delay(attempt)
+
+                # Call the retry hook if provided (supports both sync and async)
+                if self.on_retry is not None:
+                    result = self.on_retry(attempt + 1, self.last_error, delay)
+                    if asyncio.iscoroutine(result):
+                        await result
+
                 if delay > 0:
                     await asyncio.sleep(delay)
 
@@ -1796,21 +2066,43 @@ class during_hours(Combinator[T]):
     """
     Predicate that passes only during specified hours.
 
+    By default, the end hour is exclusive (e.g., during_hours(9, 17) means
+    9:00-16:59). Set inclusive_end=True to include the end hour.
+
     Example:
-        # Only allow during business hours (9 AM to 5 PM)
+        # 9:00 AM to 4:59 PM (end exclusive, default)
         business_hours = during_hours(9, 17)
 
-        # With timezone (requires datetime context or system time)
+        # 9:00 AM to 5:59 PM (end inclusive)
+        business_hours = during_hours(9, 17, inclusive_end=True)
+
+        # Overnight: 10:00 PM to 5:59 AM
+        night_shift = during_hours(22, 6)
+
+        # With timezone
         trading_hours = during_hours(9, 16, tz="America/New_York")
+
+    Args:
+        start_hour: Start hour (0-23), inclusive
+        end_hour: End hour (0-23), exclusive by default
+        tz: Optional timezone name (e.g., "America/New_York")
+        inclusive_end: If True, include the end hour (default: False)
     """
 
-    def __init__(self, start_hour: int, end_hour: int, tz: str | None = None):
+    def __init__(
+        self,
+        start_hour: int,
+        end_hour: int,
+        tz: str | None = None,
+        inclusive_end: bool = False,
+    ):
         if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
             raise ValueError("Hours must be 0-23")
 
         self.start_hour = start_hour
         self.end_hour = end_hour
         self.tz = tz
+        self.inclusive_end = inclusive_end
 
     def _get_current_hour(self) -> int:
         """Get current hour, optionally in specified timezone."""
@@ -1831,14 +2123,24 @@ class during_hours(Combinator[T]):
 
         if self.start_hour <= self.end_hour:
             # Normal range (e.g., 9 to 17)
-            ok = self.start_hour <= hour < self.end_hour
+            if self.inclusive_end:
+                ok = self.start_hour <= hour <= self.end_hour
+            else:
+                ok = self.start_hour <= hour < self.end_hour
         else:
             # Overnight range (e.g., 22 to 6)
-            ok = hour >= self.start_hour or hour < self.end_hour
+            if self.inclusive_end:
+                ok = hour >= self.start_hour or hour <= self.end_hour
+            else:
+                ok = hour >= self.start_hour or hour < self.end_hour
 
         return ok, ctx
 
     def __repr__(self) -> str:
+        if self.inclusive_end:
+            return (
+                f"during_hours({self.start_hour}, {self.end_hour}, inclusive_end=True)"
+            )
         return f"during_hours({self.start_hour}, {self.end_hour})"
 
 
@@ -2084,7 +2386,11 @@ class ExpressionParser:
             elif ch == "|":
                 self.tokens.append((self.OR, "|"))
                 self.pos += 1
-            elif ch == ">" and self.pos + 1 < len(self.text) and self.text[self.pos + 1] == ">":
+            elif (
+                ch == ">"
+                and self.pos + 1 < len(self.text)
+                and self.text[self.pos + 1] == ">"
+            ):
                 self.tokens.append((self.THEN, ">>"))
                 self.pos += 2
             elif ch in "~!":
