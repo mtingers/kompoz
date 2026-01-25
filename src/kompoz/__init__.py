@@ -523,7 +523,7 @@ class TraceHook(Protocol):
                 return None  # span token
 
             def on_exit(self, span, name, ok, duration_ms, depth):
-                status = "âœ“" if ok else "âœ—"
+                status = "✔" if ok else "✗"
                 print(f"{'  ' * depth}<- {name} {status} ({duration_ms:.2f}ms)")
 
             def on_error(self, span, name, error, duration_ms, depth):
@@ -789,9 +789,9 @@ class PrintHook:
 
         # Output:
         # -> Predicate(is_admin)
-        # <- Predicate(is_admin) âœ— (0.02ms)
+        # <- Predicate(is_admin) ✗ (0.02ms)
         # -> Predicate(is_active)
-        # <- Predicate(is_active) âœ“ (0.01ms)
+        # <- Predicate(is_active) ✔ (0.01ms)
     """
 
     def __init__(self, indent: str = "  ", show_ctx: bool = False):
@@ -810,7 +810,7 @@ class PrintHook:
         self, span: float, name: str, ok: bool, duration_ms: float, depth: int
     ) -> None:
         prefix = self.indent * depth
-        status = "âœ“" if ok else "âœ—"
+        status = "✔" if ok else "✗"
         print(f"{prefix}<- {name} {status} ({duration_ms:.2f}ms)")
 
     def on_error(
