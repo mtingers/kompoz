@@ -11,6 +11,7 @@
     - [3. Run Rules](#3-run-rules)
   - [Operators](#operators)
   - [Transforms (Data Pipelines)](#transforms-data-pipelines)
+    - [Error Tracking](#error-tracking)
   - [Expression DSL](#expression-dsl)
     - [Basic Syntax](#basic-syntax)
     - [Expression Operators](#expression-operators)
@@ -28,6 +29,7 @@
   - [Tracing & Debugging](#tracing-debugging)
     - [Explain Rules](#explain-rules)
     - [Tracing Execution](#tracing-execution)
+    - [Async Tracing](#async-tracing)
     - [Trace Configuration](#trace-configuration)
     - [Built-in Hooks](#built-in-hooks)
     - [Custom Hooks](#custom-hooks)
@@ -36,7 +38,9 @@
   - [Async Support](#async-support)
   - [Caching / Memoization](#caching-memoization)
   - [Retry Logic](#retry-logic)
+    - [Observability Hooks](#observability-hooks)
   - [Time-Based Rules](#time-based-rules)
+  - [Equality and Hashing](#equality-and-hashing)
   - [API Reference](#api-reference)
     - [Core Classes](#core-classes)
     - [Decorators](#decorators)
@@ -50,7 +54,7 @@
   - [Examples](#examples-1)
   - [Contributing](#contributing)
   - [License](#license)
-      <!--toc:end-->
+    <!--toc:end-->
 
 **Composable Predicate & Transform Combinators for Python**
 
@@ -95,10 +99,13 @@ ok, _ = can_access.run(user)
 
 ## Features
 
-- **Operator Overloading**: Use `&` (and), `|` (or), `~` (not) for intuitive composition
+- **Operator Overloading**: Use `&` (and), `|` (or), `~` (not), `>>` (then) for intuitive composition
 - **Decorator Syntax**: Clean `@rule` and `@rule_args` decorators
 - **Parameterized Rules**: `account_older_than(30)` creates reusable predicates
-- **Expression DSL**: Human-readable rule expressions with AND/OR/NOT
+- **Expression DSL**: Human-readable rule expressions with AND/OR/NOT/THEN
+- **Async Support**: Full async/await support with tracing integration
+- **Error Tracking**: Transforms track exceptions via `last_error` attribute
+- **Retry with Observability**: Built-in retry logic with hooks for monitoring
 - **Type Hints**: Full typing support with generics
 - **Zero Dependencies**: Core library has no external dependencies
 
@@ -176,6 +183,16 @@ print(f"Access: {'granted' if ok else 'denied'}")
 | `~a`     | NOT        | Invert success/failure             |
 | `a >> b` | THEN       | Always run both, keep `b`'s result |
 
+The `>>` operator is useful for pipelines where you want to run steps unconditionally:
+
+```python
+# Logging pipeline - log runs regardless of validation result
+pipeline = validate_input >> log_attempt >> process_data
+
+# Cleanup pattern - cleanup always runs
+operation = do_work >> cleanup
+```
+
 ## Transforms (Data Pipelines)
 
 ```python
@@ -205,6 +222,34 @@ ok, result = pipeline.run("21")
 
 ok, result = pipeline.run("-5")
 # ok=False, result=-5  (stopped at is_positive)
+```
+
+### Error Tracking
+
+Transforms track exceptions via the `last_error` attribute:
+
+```python
+@pipe
+def risky_transform(data):
+    return int(data)  # May raise ValueError
+
+ok, result = risky_transform.run("not a number")
+if not ok:
+    print(f"Failed: {risky_transform.last_error}")
+    # Failed: invalid literal for int() with base 10: 'not a number'
+```
+
+This also works for async transforms:
+
+```python
+@async_pipe
+async def fetch_data(url):
+    async with aiohttp.get(url) as resp:
+        return await resp.json()
+
+ok, result = await fetch_data.run("https://api.example.com")
+if not ok:
+    print(f"Request failed: {fetch_data.last_error}")
 ```
 
 ## Expression DSL
@@ -252,13 +297,14 @@ loaded = reg.load("is_admin AND is_active")  # same thing
 
 Both symbol and word syntax are supported:
 
-| Symbol | Word  | Meaning                  |
-| ------ | ----- | ------------------------ |
-| `&`    | `AND` | All conditions must pass |
-| `\|`   | `OR`  | Any condition must pass  |
-| `~`    | `NOT` | Invert the condition     |
-| `!`    | `NOT` | Invert (alias)           |
-| `()`   |       | Grouping                 |
+| Symbol | Word   | Meaning                            |
+| ------ | ------ | ---------------------------------- |
+| `&`    | `AND`  | All conditions must pass           |
+| `\|`   | `OR`   | Any condition must pass            |
+| `~`    | `NOT`  | Invert the condition               |
+| `!`    | `NOT`  | Invert (alias)                     |
+| `>>`   | `THEN` | Always run both, keep second result|
+| `()`   |        | Grouping                           |
 
 ### Examples
 
@@ -279,6 +325,10 @@ loaded = reg.load("is_admin OR is_premium")
 loaded = reg.load("~is_banned")
 loaded = reg.load("NOT is_banned")
 loaded = reg.load("!is_banned")
+
+# THEN - always run both
+loaded = reg.load("validate >> process")
+loaded = reg.load("validate THEN process")
 
 # Parameterized rules
 loaded = reg.load("account_older_than(30)")
@@ -319,8 +369,9 @@ loaded = reg.load("""
 From lowest to highest:
 
 1. `OR` / `|` (evaluated last)
-2. `AND` / `&`
-3. `NOT` / `~` / `!` (evaluated first)
+2. `THEN` / `>>` (sequence operator)
+3. `AND` / `&`
+4. `NOT` / `~` / `!` (evaluated first)
 
 ```python
 # This expression:
@@ -499,6 +550,42 @@ Output:
 <- OR ✓ (0.20ms)
 ```
 
+### Async Tracing
+
+Async combinators fully support tracing via the same `use_tracing()` context manager:
+
+```python
+from kompoz import use_tracing, run_async_traced, PrintHook, async_rule
+
+@async_rule
+async def check_permission(user):
+    return await db.has_permission(user.id)
+
+@async_rule
+async def check_quota(user):
+    return await db.check_quota(user.id)
+
+can_proceed = check_permission & check_quota
+
+# Option 1: Context manager works with async
+with use_tracing(PrintHook()):
+    ok, result = await can_proceed.run(user)
+
+# Option 2: Explicit async tracing
+ok, result = await run_async_traced(can_proceed, user, PrintHook())
+```
+
+Output:
+
+```
+-> AsyncAND
+  -> AsyncPredicate(check_permission)
+  <- AsyncPredicate(check_permission) ✓ (15.23ms)
+  -> AsyncPredicate(check_quota)
+  <- AsyncPredicate(check_quota) ✓ (8.41ms)
+<- AsyncAND ✓ (23.89ms)
+```
+
 ### Trace Configuration
 
 ```python
@@ -595,6 +682,20 @@ if not result.ok:
 result.raise_if_invalid(ValueError)
 ```
 
+Validating rules support the NOT operator:
+
+```python
+@vrule(error="User must not be an admin")
+def is_admin(user):
+    return user.is_admin
+
+# ~is_admin returns a ValidatingCombinator that inverts the check
+regular_users_only = ~is_admin & is_active
+
+result = regular_users_only.validate(admin_user)
+# result.ok = False, result.errors = ["NOT condition failed (inner passed)"]
+```
+
 ## Async Support
 
 For rules that need to hit databases or APIs:
@@ -624,6 +725,18 @@ ok, result = await can_admin.run(user)
 # Async retry with exponential backoff
 resilient = AsyncRetry(fetch_data, max_attempts=3, backoff=1.0, exponential=True)
 ok, result = await resilient.run(request)
+```
+
+Async transforms track errors just like sync transforms:
+
+```python
+@async_pipe
+async def fetch_user_data(user_id):
+    return await api.get_user(user_id)
+
+ok, result = await fetch_user_data.run(invalid_id)
+if not ok:
+    print(f"API error: {fetch_user_data.last_error}")
 ```
 
 ## Caching / Memoization
@@ -670,6 +783,45 @@ fetch = Retry(
 ok, result = fetch.run(request)
 ```
 
+### Observability Hooks
+
+Retry combinators support observability via callbacks and state tracking:
+
+```python
+from kompoz import Retry, AsyncRetry
+
+# Callback for monitoring retries
+def on_retry(attempt: int, error: Exception | None, delay: float):
+    print(f"Retry {attempt}: error={error}, waiting {delay}s")
+    metrics.increment("api.retries", tags={"attempt": attempt})
+
+fetch = Retry(
+    fetch_from_api,
+    max_attempts=3,
+    backoff=1.0,
+    on_retry=on_retry  # Called before each retry
+)
+
+ok, result = fetch.run(request)
+
+# After execution, check state
+print(f"Total attempts: {fetch.attempts_made}")
+print(f"Last error: {fetch.last_error}")
+```
+
+For async retries, the callback can be sync or async:
+
+```python
+async def on_retry_async(attempt, error, delay):
+    await log_to_service(f"Retry {attempt}")
+
+fetch = AsyncRetry(
+    fetch_from_api,
+    max_attempts=3,
+    on_retry=on_retry_async  # Async callback supported
+)
+```
+
 ## Time-Based Rules
 
 Create rules that depend on time, date, or day of week:
@@ -678,9 +830,12 @@ Create rules that depend on time, date, or day of week:
 from kompoz import during_hours, on_weekdays, on_days, after_date, before_date, between_dates
 from datetime import date
 
-# Time of day
-business_hours = during_hours(9, 17)      # 9 AM to 5 PM
-night_mode = during_hours(22, 6)          # 10 PM to 6 AM (overnight)
+# Time of day (end hour is exclusive by default)
+business_hours = during_hours(9, 17)      # 9:00 AM to 4:59 PM
+night_mode = during_hours(22, 6)          # 10:00 PM to 5:59 AM (overnight)
+
+# Include the end hour with inclusive_end=True
+full_hours = during_hours(9, 17, inclusive_end=True)  # 9:00 AM to 5:59 PM
 
 # Day of week
 weekdays = on_weekdays()                  # Monday-Friday
@@ -699,13 +854,38 @@ can_trade = is_active & during_hours(9, 16) & on_weekdays()
 can_trade_premium = is_premium & during_hours(7, 20) & on_weekdays()
 ```
 
+## Equality and Hashing
+
+`Predicate` and `Transform` objects support equality comparison and hashing, making them usable in sets and as dictionary keys:
+
+```python
+from kompoz import rule, Predicate
+
+@rule
+def is_positive(x):
+    return x > 0
+
+# Same function and name = equal
+p1 = Predicate(lambda x: x > 0, "check")
+p2 = Predicate(lambda x: x > 0, "check")
+
+# Can use in sets (deduplication)
+rules = {is_positive, is_positive}  # len(rules) == 1
+
+# Can use as dict keys
+rule_docs = {
+    is_positive: "Checks if value is greater than zero",
+    is_even: "Checks if value is divisible by 2",
+}
+```
+
 ## API Reference
 
 ### Core Classes
 
 - **`Combinator[T]`**: Abstract base class for all combinators
-- **`Predicate[T]`**: Checks a condition, doesn't modify context
-- **`Transform[T]`**: Transforms context, fails on exception
+- **`Predicate[T]`**: Checks a condition, doesn't modify context. Supports `__eq__` and `__hash__`.
+- **`Transform[T]`**: Transforms context, fails on exception. Has `last_error` attribute. Supports `__eq__` and `__hash__`.
 - **`Try[T]`**: Wraps a function, converts exceptions to failure
 - **`Registry[T]`**: Register and load rules from expressions
 
@@ -727,8 +907,9 @@ can_trade_premium = is_premium & during_hours(7, 20) & on_weekdays()
 
 - **`parse_expression(text)`**: Parse expression string into config dict
 - **`explain(combinator)`**: Generate plain English explanation of a rule
-- **`use_tracing(hook, config)`**: Context manager to enable tracing
-- **`run_traced(combinator, ctx, hook, config)`**: Run with explicit tracing
+- **`use_tracing(hook, config)`**: Context manager to enable tracing (sync and async)
+- **`run_traced(combinator, ctx, hook, config)`**: Run sync combinator with explicit tracing
+- **`run_async_traced(combinator, ctx, hook, config)`**: Run async combinator with explicit tracing
 - **`use_cache()`**: Context manager to enable caching
 
 ### Tracing Classes
@@ -742,25 +923,27 @@ can_trade_premium = is_premium & during_hours(7, 20) & on_weekdays()
 ### Validation Classes
 
 - **`ValidationResult`**: Result with ok, errors, and ctx
+- **`ValidatingCombinator`**: Base class for validating combinators. Supports `&`, `|`, and `~` operators.
 - **`ValidatingPredicate`**: Predicate with error message support
 
 ### Async Classes
 
-- **`AsyncCombinator`**: Base class for async combinators
+- **`AsyncCombinator`**: Base class for async combinators. Integrates with `use_tracing()`.
 - **`AsyncPredicate`**: Async predicate
-- **`AsyncTransform`**: Async transform
-- **`AsyncRetry`**: Async retry with backoff
+- **`AsyncTransform`**: Async transform. Has `last_error` attribute.
+- **`AsyncRetry`**: Async retry with backoff and observability hooks
 
 ### Retry & Caching
 
-- **`Retry`**: Retry combinator with configurable backoff
+- **`Retry`**: Retry combinator with configurable backoff. Has `on_retry` callback, `last_error`, and `attempts_made` attributes.
+- **`AsyncRetry`**: Async retry with same features as `Retry`
 - **`CachedPredicate`**: Predicate with result caching
 
 ### Temporal Combinators
 
-- **`during_hours(start, end)`**: Check if current hour is in range
+- **`during_hours(start, end, tz=None, inclusive_end=False)`**: Check if current hour is in range. Use `inclusive_end=True` to include the end hour.
 - **`on_weekdays()`**: Check if today is Monday-Friday
-- **`on_days(*days)`**: Check if today is one of the specified days
+- **`on_days(*days)`**: Check if today is one of the specified days (0=Monday, 6=Sunday)
 - **`after_date(year, month, day)`**: Check if today is after date
 - **`before_date(year, month, day)`**: Check if today is before date
 - **`between_dates(start, end)`**: Check if today is in date range
