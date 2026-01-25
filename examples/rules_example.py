@@ -130,3 +130,8 @@ if __name__ == "__main__":
     print(f"  ~is_banned: {not_banned.run(bob)[0]}")
     print(f"  account_older_than(30): {mature_account.run(bob)[0]}")
     print(f"  credit_above(650): {good_credit.run(bob)[0]}")
+
+    from kompoz import explain
+
+    rule = is_admin | (is_active & ~is_banned & account_older_than(30))
+    print(explain(rule))

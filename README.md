@@ -25,10 +25,27 @@
     - [Form Validation](#form-validation)
     - [Data Pipeline with Fallbacks](#data-pipeline-with-fallbacks)
     - [Feature Flags](#feature-flags)
+  - [Tracing & Debugging](#tracing-debugging)
+    - [Explain Rules](#explain-rules)
+    - [Tracing Execution](#tracing-execution)
+    - [Trace Configuration](#trace-configuration)
+    - [Built-in Hooks](#built-in-hooks)
+    - [Custom Hooks](#custom-hooks)
+    - [OpenTelemetry Integration](#opentelemetry-integration)
+  - [Validation with Error Messages](#validation-with-error-messages)
+  - [Async Support](#async-support)
+  - [Caching / Memoization](#caching-memoization)
+  - [Retry Logic](#retry-logic)
+  - [Time-Based Rules](#time-based-rules)
   - [API Reference](#api-reference)
     - [Core Classes](#core-classes)
     - [Decorators](#decorators)
     - [Functions](#functions)
+    - [Tracing Classes](#tracing-classes)
+    - [Validation Classes](#validation-classes)
+    - [Async Classes](#async-classes)
+    - [Retry & Caching](#retry-caching)
+    - [Temporal Combinators](#temporal-combinators)
     - [Utility Combinators](#utility-combinators)
   - [Examples](#examples-1)
   - [Contributing](#contributing)
@@ -44,7 +61,6 @@ Kompoz lets you build complex validation rules and data pipelines using intuitiv
 
 ```python
 from dataclasses import dataclass
-
 from kompoz import rule, rule_args
 
 
@@ -434,6 +450,255 @@ show_feature = (
 )
 ```
 
+## Tracing & Debugging
+
+### Explain Rules
+
+Generate plain English explanations of what a rule does:
+
+```python
+from kompoz import explain
+
+rule = is_admin | (is_active & ~is_banned & account_older_than(30))
+print(explain(rule))
+
+# Output:
+# Check passes if ANY of:
+#   • Check: is_admin
+#   • ALL of:
+#     • Check: is_active
+#     • NOT: is_banned
+#     • Check: account_older_than(30)
+```
+
+### Tracing Execution
+
+Trace rule execution with built-in hooks or custom implementations:
+
+```python
+from kompoz import use_tracing, run_traced, PrintHook, TraceConfig
+
+# Option 1: Context manager (traces all run() calls in scope)
+with use_tracing(PrintHook()):
+    rule.run(user)
+
+# Option 2: Explicit tracing
+run_traced(rule, user, PrintHook())
+```
+
+Output:
+
+```
+-> OR
+  -> Predicate(is_admin)
+  <- Predicate(is_admin) ✗ (0.02ms)
+  -> AND
+    -> Predicate(is_active)
+    <- Predicate(is_active) ✓ (0.01ms)
+  <- AND ✓ (0.15ms)
+<- OR ✓ (0.20ms)
+```
+
+### Trace Configuration
+
+```python
+from kompoz import TraceConfig
+
+# Trace only leaf predicates (skip AND/OR/NOT)
+with use_tracing(PrintHook(), TraceConfig(include_leaf_only=True)):
+    rule.run(user)
+
+# Limit trace depth
+with use_tracing(PrintHook(), TraceConfig(max_depth=2)):
+    rule.run(user)
+
+# Disable nested tracing (top-level only)
+with use_tracing(PrintHook(), TraceConfig(nested=False)):
+    rule.run(user)
+```
+
+### Built-in Hooks
+
+```python
+from kompoz import PrintHook, LoggingHook
+
+# PrintHook - prints to stdout
+hook = PrintHook(indent="  ", show_ctx=False)
+
+# LoggingHook - uses Python logging
+import logging
+logger = logging.getLogger("kompoz")
+hook = LoggingHook(logger, level=logging.DEBUG)
+```
+
+### Custom Hooks
+
+Implement the `TraceHook` protocol:
+
+```python
+class MyHook:
+    def on_enter(self, name: str, ctx, depth: int):
+        """Called before combinator runs. Return a span token."""
+        print(f"Starting {name}")
+        return time.time()
+
+    def on_exit(self, span, name: str, ok: bool, duration_ms: float, depth: int):
+        """Called after combinator completes."""
+        print(f"Finished {name}: {'OK' if ok else 'FAIL'} in {duration_ms:.2f}ms")
+
+    def on_error(self, span, name: str, error: Exception, duration_ms: float, depth: int):
+        """Optional: called if combinator raises."""
+        print(f"Error in {name}: {error}")
+```
+
+### OpenTelemetry Integration
+
+```python
+from opentelemetry import trace
+from kompoz import use_tracing, OpenTelemetryHook
+
+tracer = trace.get_tracer("my-service")
+
+with use_tracing(OpenTelemetryHook(tracer)):
+    rule.run(user)  # Creates spans for each combinator
+```
+
+## Validation with Error Messages
+
+Get descriptive error messages when rules fail:
+
+```python
+from kompoz import vrule, vrule_args, ValidationResult
+
+@vrule(error="User {ctx.name} must be an admin")
+def is_admin(user):
+    return user.is_admin
+
+@vrule(error=lambda u: f"{u.name} is BANNED!")
+def not_banned(user):
+    return not user.is_banned
+
+@vrule_args(error="Account must be older than {days} days")
+def account_older_than(user, days):
+    return user.account_age_days > days
+
+# Compose validating rules - collects ALL error messages
+can_trade = is_admin & not_banned & account_older_than(30)
+
+# Validate and get errors
+result = can_trade.validate(user)
+if not result.ok:
+    print(result.errors)
+    # ["User Bob must be an admin", "Account must be older than 30 days"]
+
+# Raise exception if invalid
+result.raise_if_invalid(ValueError)
+```
+
+## Async Support
+
+For rules that need to hit databases or APIs:
+
+```python
+from kompoz import async_rule, async_rule_args, async_pipe, AsyncRetry
+
+@async_rule
+async def has_permission(user):
+    return await db.check_permission(user.id)
+
+@async_rule_args
+async def has_role(user, role):
+    return await db.check_role(user.id, role)
+
+@async_pipe
+async def load_profile(user):
+    user.profile = await api.get_profile(user.id)
+    return user
+
+# Compose async rules
+can_admin = has_permission & has_role("admin")
+
+# Run async
+ok, result = await can_admin.run(user)
+
+# Async retry with exponential backoff
+resilient = AsyncRetry(fetch_data, max_attempts=3, backoff=1.0, exponential=True)
+ok, result = await resilient.run(request)
+```
+
+## Caching / Memoization
+
+Avoid re-running expensive predicates:
+
+```python
+from kompoz import cached_rule, use_cache
+
+@cached_rule
+def expensive_check(user):
+    return slow_database_query(user.id)
+
+@cached_rule(key=lambda u: u.id)
+def check_by_id(user):
+    return api_call(user.id)
+
+# Results cached within this scope
+with use_cache():
+    rule.run(user)  # Executes
+    rule.run(user)  # Uses cache
+    rule.run(user)  # Uses cache
+```
+
+## Retry Logic
+
+Retry failed operations with configurable backoff:
+
+```python
+from kompoz import Retry
+
+# Simple retry
+fetch = Retry(fetch_from_api, max_attempts=3)
+
+# Exponential backoff
+fetch = Retry(
+    fetch_from_api,
+    max_attempts=5,
+    backoff=1.0,       # Initial delay in seconds
+    exponential=True,  # Double delay each attempt
+    jitter=0.1         # Random jitter to avoid thundering herd
+)
+
+ok, result = fetch.run(request)
+```
+
+## Time-Based Rules
+
+Create rules that depend on time, date, or day of week:
+
+```python
+from kompoz import during_hours, on_weekdays, on_days, after_date, before_date, between_dates
+from datetime import date
+
+# Time of day
+business_hours = during_hours(9, 17)      # 9 AM to 5 PM
+night_mode = during_hours(22, 6)          # 10 PM to 6 AM (overnight)
+
+# Day of week
+weekdays = on_weekdays()                  # Monday-Friday
+mwf = on_days(0, 2, 4)                    # Mon, Wed, Fri
+weekends = on_days(5, 6)                  # Sat, Sun
+
+# Date ranges
+launched = after_date(2024, 6, 1)
+promo_active = before_date(2024, 12, 31)
+q1_only = between_dates(date(2024, 1, 1), date(2024, 3, 31))
+
+# Compose with other rules
+can_trade = is_active & during_hours(9, 16) & on_weekdays()
+
+# Premium users get extended hours
+can_trade_premium = is_premium & during_hours(7, 20) & on_weekdays()
+```
+
 ## API Reference
 
 ### Core Classes
@@ -446,14 +711,59 @@ show_feature = (
 
 ### Decorators
 
-- **`@rule`**: Create a simple rule/predicate (single argument)
-- **`@rule_args`**: Create a parameterized rule factory (multiple arguments)
-- **`@pipe`**: Create a simple transform (single argument)
-- **`@pipe_args`**: Create a parameterized transform factory (multiple arguments)
+- **`@rule`**: Create a simple rule/predicate
+- **`@rule_args`**: Create a parameterized rule factory
+- **`@pipe`**: Create a simple transform
+- **`@pipe_args`**: Create a parameterized transform factory
+- **`@vrule`**: Create a validating rule with error message
+- **`@vrule_args`**: Create a parameterized validating rule
+- **`@async_rule`**: Create an async predicate
+- **`@async_rule_args`**: Create a parameterized async predicate
+- **`@async_pipe`**: Create an async transform
+- **`@async_pipe_args`**: Create a parameterized async transform
+- **`@cached_rule`**: Create a rule with result caching
 
 ### Functions
 
 - **`parse_expression(text)`**: Parse expression string into config dict
+- **`explain(combinator)`**: Generate plain English explanation of a rule
+- **`use_tracing(hook, config)`**: Context manager to enable tracing
+- **`run_traced(combinator, ctx, hook, config)`**: Run with explicit tracing
+- **`use_cache()`**: Context manager to enable caching
+
+### Tracing Classes
+
+- **`TraceHook`**: Protocol for custom trace hooks
+- **`TraceConfig`**: Configuration for tracing behavior
+- **`PrintHook`**: Simple stdout tracing
+- **`LoggingHook`**: Python logging integration
+- **`OpenTelemetryHook`**: OpenTelemetry integration
+
+### Validation Classes
+
+- **`ValidationResult`**: Result with ok, errors, and ctx
+- **`ValidatingPredicate`**: Predicate with error message support
+
+### Async Classes
+
+- **`AsyncCombinator`**: Base class for async combinators
+- **`AsyncPredicate`**: Async predicate
+- **`AsyncTransform`**: Async transform
+- **`AsyncRetry`**: Async retry with backoff
+
+### Retry & Caching
+
+- **`Retry`**: Retry combinator with configurable backoff
+- **`CachedPredicate`**: Predicate with result caching
+
+### Temporal Combinators
+
+- **`during_hours(start, end)`**: Check if current hour is in range
+- **`on_weekdays()`**: Check if today is Monday-Friday
+- **`on_days(*days)`**: Check if today is one of the specified days
+- **`after_date(year, month, day)`**: Check if today is after date
+- **`before_date(year, month, day)`**: Check if today is before date
+- **`between_dates(start, end)`**: Check if today is in date range
 
 ### Utility Combinators
 
@@ -470,6 +780,10 @@ The `examples/` directory contains:
 | `rules_example.py`      | Using `@rule` and `@rule_args` decorators         |
 | `transforms_example.py` | Using `@pipe` and `@pipe_args` for data pipelines |
 | `registry_example.py`   | Loading rules from `.kpz` files                   |
+| `tracing_example.py`    | Tracing, debugging, and explaining rules          |
+| `validation_example.py` | Validation with error messages                    |
+| `async_example.py`      | Async rules, transforms, and retry                |
+| `temporal_example.py`   | Time-based and date-based rules                   |
 | `access_control.kpz`    | Example access control expression                 |
 | `trading.kpz`           | Example trading permission expression             |
 
@@ -478,8 +792,9 @@ Run examples:
 ```bash
 cd kompoz
 python examples/rules_example.py
-python examples/transforms_example.py
-python examples/registry_example.py
+python examples/validation_example.py
+python examples/async_example.py
+python examples/temporal_example.py
 ```
 
 ## Contributing
