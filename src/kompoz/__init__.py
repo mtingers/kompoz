@@ -1193,13 +1193,13 @@ def vrule(
 @overload
 def vrule_args(
     fn: Callable[..., bool], *, error: str | Callable[..., str] | None = None
-) -> Callable[..., ValidatingPredicate[Any]]: ...
+) -> Callable[..., ValidatingPredicate]: ...
 
 
 @overload
 def vrule_args(
     fn: None = None, *, error: str | Callable[..., str] | None = None
-) -> Callable[[Callable[..., bool]], Callable[..., ValidatingPredicate[Any]]]: ...
+) -> Callable[[Callable[..., bool]], Callable[..., ValidatingPredicate]]: ...
 
 
 def vrule_args(
@@ -1207,44 +1207,69 @@ def vrule_args(
     *,
     error: str | Callable[..., str] | None = None,
 ) -> (
-    Callable[..., ValidatingPredicate[Any]]
-    | Callable[[Callable[..., bool]], Callable[..., ValidatingPredicate[Any]]]
+    Callable[..., ValidatingPredicate]
+    | Callable[[Callable[..., bool]], Callable[..., ValidatingPredicate]]
 ):
-    """
-    Decorator to create a parameterized validating rule factory.
+    def decorator(f: Callable[..., bool]) -> Callable[..., ValidatingPredicate]:
+        # 1. Inspect the function signature to enable param name
+        sig = inspect.signature(f)
 
-    Example:
-        @vrule_args(error="Account must be older than {arg0} days")
-        def account_older_than(user, days):
-            return user.account_age_days > days
-
-        result = account_older_than(30).validate(user)
-    """
-
-    def decorator(f: Callable[..., bool]) -> Callable[..., ValidatingPredicate[Any]]:
-        def factory(*args: Any, **kwargs: Any) -> ValidatingPredicate[Any]:
+        def factory(*args: Any, **kwargs: Any) -> ValidatingPredicate:
             name = f"{f.__name__}({', '.join(map(repr, args))})"
 
-            # Create error message with args available
+            # 2. Helper to resolve parameter names from args
+            def get_bound_params():
+                # We assume the first argument of 'f' is 'ctx', which isn't in *args here.
+                # We bind a dummy value for the first argument to align *args correctly.
+                try:
+                    bound = sig.bind_partial(None, *args, **kwargs)
+                    bound.apply_defaults()
+                    # Remove the first argument (the context placeholder)
+                    params = dict(bound.arguments)
+                    first_param_name = list(sig.parameters.keys())[0]
+                    if first_param_name in params:
+                        del params[first_param_name]
+                    return params
+                except TypeError:
+                    # Fallback if binding fails
+                    return kwargs
+
             err_msg: str | Callable[[Any], str] | None
+
             if error is None:
                 err_msg = None
+
+            # CASE A: Error is a callable (custom function)
             elif callable(error):
-                # Capture the callable in a local variable for type narrowing
                 error_fn: Callable[..., str] = error
 
                 def make_error_fn(ctx: Any) -> str:
                     return error_fn(ctx, *args, **kwargs)
 
                 err_msg = make_error_fn
+
+            # CASE B: Error is a string (template)
             else:
-                # Format the error string with args
-                format_kwargs = {f"arg{i}": v for i, v in enumerate(args)}
-                format_kwargs.update(kwargs)
-                try:
-                    err_msg = error.format(**format_kwargs)
-                except (KeyError, IndexError):
-                    err_msg = error
+                # This tells the type checker: "Inside this block, we are 100% sure this is a string."
+                template_str: str = error
+
+                def make_formatted_error(ctx: Any) -> str:
+                    # 1. Standard {arg0}, {arg1} support
+                    format_context = {f"arg{i}": v for i, v in enumerate(args)}
+
+                    # 2. Parameter name support ({score})
+                    format_context.update(get_bound_params())
+
+                    # 3. Context support ({ctx})
+                    format_context["ctx"] = ctx
+
+                    try:
+                        # Now we use 'template_str' instead of 'error'
+                        return template_str.format(**format_context)
+                    except (KeyError, IndexError):
+                        return template_str
+
+                err_msg = make_formatted_error
 
             def predicate_fn(ctx: Any) -> bool:
                 return f(ctx, *args, **kwargs)

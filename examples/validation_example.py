@@ -46,12 +46,12 @@ def has_email(user: User) -> bool:
     return bool(user.email)
 
 
-@vrule_args(error="Account must be older than {arg0} days")
+@vrule_args(error="Account must be older than {arg0} days but was {ctx.account_age_days}")
 def account_older_than(user: User, days: int) -> bool:
     return user.account_age_days > days
 
 
-@vrule_args(error="Credit score for must be at least {arg0} {ctx.name}")
+@vrule_args(error="Credit score for must be at least {score} but was {ctx.credit_score}")
 def credit_at_least(user: User, score: int) -> bool:
     return user.credit_score >= score
 
