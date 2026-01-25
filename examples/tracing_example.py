@@ -7,8 +7,15 @@ to understand what rules do and how they execute.
 
 from dataclasses import dataclass
 
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
 from kompoz import (
     LoggingHook,
+    OpenTelemetryHook,
     PrintHook,
     TraceConfig,
     explain,
@@ -17,6 +24,16 @@ from kompoz import (
     run_traced,
     use_tracing,
 )
+
+# 1. Setup Resource (Metadata for your app)
+# 2. Setup Tracer (for Traces)
+resource = Resource(attributes={"service.name": "kompoz-tracing-example"})
+trace_provider = TracerProvider(resource=resource)
+otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
+trace_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+trace.set_tracer_provider(trace_provider)
+
+tracer = trace.get_tracer(__name__)
 
 
 @dataclass
@@ -102,7 +119,9 @@ if __name__ == "__main__":
     print("TRACED RUN: Using use_tracing() context manager")
     print("=" * 60)
     print()
-    with use_tracing(PrintHook()):
+    with use_tracing(
+        OpenTelemetryHook(tracer, link_sibling_spans=True, predicates_as_events=False)
+    ):
         ok, _ = can_access.run(user)
     print()
     print(f"Result: {'✓ Access granted' if ok else '✗ Access denied'}")
@@ -116,9 +135,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print()
     ok, _ = run_traced(can_access, user, PrintHook(show_ctx=True))
-    print()
-    print(f"Result: {'✓ Access granted' if ok else '✗ Access denied'}")
-    print()
+    # ok, _ = run_traced(can_access, user, OpenTelemetryHook(tracer))
 
     # -------------------------------------------------------------------------
     # 5. Trace only leaf predicates (skip AND/OR/NOT)

@@ -119,10 +119,18 @@ from datetime import date, datetime
 from typing import (
     Any,
     Generic,
+    Optional,
     Protocol,
     TypeVar,
     overload,
     runtime_checkable,
+)
+
+from opentelemetry.trace import (
+    Link,
+    Status,
+    StatusCode,
+    set_span_in_context,
 )
 
 T = TypeVar("T")
@@ -852,53 +860,357 @@ class LoggingHook:
     ) -> None:
         self.logger.error(f"[ERROR] {name} -> {error} ({duration_ms:.2f}ms)")
 
+        from typing import Any
+
 
 class OpenTelemetryHook:
     """
-    Trace hook for OpenTelemetry integration.
+    Full-featured OpenTelemetry trace hook for Kompoz with:
 
-    Requires: pip install opentelemetry-api
-
-    Example:
-        from opentelemetry import trace
-        tracer = trace.get_tracer("kompoz")
-
-        with use_tracing(OpenTelemetryHook(tracer)):
-            rule.run(user)
+    - Correct parent/child span hierarchy
+    - Explicit context management (async-safe)
+    - Depth-based span suppression
+    - Automatic span collapsing for single-child logical nodes
+    - Predicate-as-event optimization
+    - Logical operator semantics (AND / OR / NOT)
+    - Short-circuit evaluation tagging
+    - Optional sibling span linking
+    - Trace-derived metric attributes
     """
 
-    def __init__(self, tracer, span_prefix: str = "kompoz"):
+    def __init__(
+        self,
+        tracer,
+        *,
+        max_span_depth: int | None = None,
+        link_sibling_spans: bool = True,
+        collapse_single_child_operators: bool = True,
+        predicates_as_events: bool = False,
+    ):
         self.tracer = tracer
-        self.span_prefix = span_prefix
+        self.max_span_depth = max_span_depth
+        self.link_sibling_spans = link_sibling_spans
+        self.collapse_single_child_operators = collapse_single_child_operators
+        self.predicates_as_events = predicates_as_events
+
+        self._span_stack: list[Any] = []
+        self._last_span_at_depth: dict[int, Any] = {}
+        self._child_count: dict[Any, int] = {}
+
+    # -------------------------------------------------
+    # Span lifecycle
+    # -------------------------------------------------
 
     def on_enter(self, name: str, ctx: Any, depth: int) -> Any:
-        span_name = f"{self.span_prefix}.{name}"
-        span = self.tracer.start_span(span_name)
-        span.set_attribute("kompoz.depth", depth)
-        span.set_attribute("kompoz.combinator", name)
+        # Depth-based suppression
+        if self.max_span_depth is not None and depth > self.max_span_depth:
+            return None
+
+        parent = self._span_stack[-1] if self._span_stack else None
+        parent_ctx = set_span_in_context(parent) if parent else None
+
+        # Predicate-as-event optimization
+        if self.predicates_as_events and parent and self._is_predicate(name):
+            parent.add_event(
+                "predicate.evaluate",
+                {
+                    "kompoz.predicate": name,
+                    "kompoz.depth": depth,
+                },
+            )
+            self._increment_child(parent)
+            return None
+
+        links = []
+        if self.link_sibling_spans and depth in self._last_span_at_depth:
+            links.append(Link(self._last_span_at_depth[depth].get_span_context()))
+
+        span = self.tracer.start_span(
+            name,
+            context=parent_ctx,
+            links=links or None,
+        )
+
+        self._annotate_span(span, name, depth)
+
+        if parent:
+            self._increment_child(parent)
+
+        self._span_stack.append(span)
+        self._last_span_at_depth[depth] = span
+        self._child_count[span] = 0
         return span
 
     def on_exit(
-        self, span: Any, name: str, ok: bool, duration_ms: float, depth: int
+        self,
+        span: Any,
+        name: str,
+        ok: bool,
+        duration_ms: float,
+        depth: int,
     ) -> None:
-        from opentelemetry.trace import Status, StatusCode
+        if span is None:
+            return
 
         span.set_attribute("kompoz.success", ok)
         span.set_attribute("kompoz.duration_ms", duration_ms)
+        span.set_attribute("kompoz.depth", depth)
+
         if not ok:
             span.set_status(Status(StatusCode.ERROR))
+
+        # Collapse single-child logical operators
+        if (
+            self.collapse_single_child_operators
+            and span.attributes.get("kompoz.node_type") == "logical"
+            and self._child_count.get(span, 0) == 1
+        ):
+            span.set_attribute("kompoz.collapsed", True)
+
         span.end()
+        self._span_stack.pop()
 
     def on_error(
-        self, span: Any, name: str, error: Exception, duration_ms: float, depth: int
+        self,
+        span: Any,
+        name: str,
+        error: Exception,
+        duration_ms: float,
+        depth: int,
     ) -> None:
-        from opentelemetry.trace import Status, StatusCode
+        if span is None:
+            return
 
         span.set_attribute("kompoz.success", False)
         span.set_attribute("kompoz.duration_ms", duration_ms)
+        span.set_attribute("kompoz.depth", depth)
         span.record_exception(error)
         span.set_status(Status(StatusCode.ERROR, str(error)))
+
         span.end()
+        self._span_stack.pop()
+
+    # -------------------------------------------------
+    # Helpers
+    # -------------------------------------------------
+
+    def _increment_child(self, span: Any) -> None:
+        self._child_count[span] = self._child_count.get(span, 0) + 1
+
+    def _is_predicate(self, name: str) -> bool:
+        return name.upper().startswith("PREDICATE")
+
+    def _annotate_span(self, span: Any, name: str, depth: int) -> None:
+        upper = name.upper()
+
+        if upper in {"AND", "OR", "NOT"}:
+            span.set_attribute("kompoz.operator", upper)
+            span.set_attribute("kompoz.node_type", "logical")
+            span.set_attribute("kompoz.short_circuit", False)
+        else:
+            span.set_attribute("kompoz.node_type", "execution")
+
+        span.set_attribute("kompoz.name", name)
+        span.set_attribute("kompoz.depth", depth)
+
+
+# class OpenTelemetryHook:
+#     """
+#     Full-featured OpenTelemetry trace hook for Kompoz with:
+#
+#     - Correct parent/child span hierarchy
+#     - Explicit context management (async-safe)
+#     - Depth-based span suppression
+#     - Automatic span collapsing for single-child logical nodes
+#     - Predicate-as-event optimization
+#     - Logical operator semantics (AND / OR / NOT)
+#     - Short-circuit evaluation tagging
+#     - Optional sibling span linking
+#     - Trace-derived metric attributes
+#     """
+#
+#     def __init__(
+#         self,
+#         tracer,
+#         *,
+#         max_span_depth: int | None = None,
+#         link_sibling_spans: bool = False,
+#         collapse_single_child_operators: bool = True,
+#         predicates_as_events: bool = True,
+#     ):
+#         self.tracer = tracer
+#         self.max_span_depth = max_span_depth
+#         self.link_sibling_spans = link_sibling_spans
+#         self.collapse_single_child_operators = collapse_single_child_operators
+#         self.predicates_as_events = predicates_as_events
+#
+#         self._span_stack: list[Any] = []
+#         self._last_span_at_depth: dict[int, Any] = {}
+#         self._child_count: dict[Any, int] = {}
+#
+#     # -------------------------------------------------
+#     # Span lifecycle
+#     # -------------------------------------------------
+#
+#     def on_enter(self, name: str, ctx: Any, depth: int) -> Any | None:
+#         # Depth-based suppression
+#         if self.max_span_depth is not None and depth > self.max_span_depth:
+#             return None
+#
+#         parent = self._span_stack[-1] if self._span_stack else None
+#         parent_ctx = set_span_in_context(parent) if parent else None
+#
+#         # Predicate-as-event optimization
+#         if self.predicates_as_events and parent and self._is_predicate(name):
+#             parent.add_event(
+#                 "predicate.evaluate",
+#                 {
+#                     "kompoz.predicate": name,
+#                     "kompoz.depth": depth,
+#                 },
+#             )
+#             self._increment_child(parent)
+#             return None
+#
+#         links = []
+#         if self.link_sibling_spans and depth in self._last_span_at_depth:
+#             links.append(Link(self._last_span_at_depth[depth].get_span_context()))
+#
+#         span = self.tracer.start_span(
+#             name,
+#             context=parent_ctx,
+#             links=links or None,
+#         )
+#
+#         self._annotate_span(span, name, depth)
+#
+#         if parent:
+#             self._increment_child(parent)
+#
+#         self._span_stack.append(span)
+#         self._last_span_at_depth[depth] = span
+#         self._child_count[span] = 0
+#         return span
+#
+#     def on_exit(
+#         self,
+#         span: Any | None,
+#         name: str,
+#         ok: bool,
+#         duration_ms: float,
+#         depth: int,
+#     ) -> None:
+#         if span is None:
+#             return
+#
+#         span.set_attribute("kompoz.success", ok)
+#         span.set_attribute("kompoz.duration_ms", duration_ms)
+#         span.set_attribute("kompoz.depth", depth)
+#
+#         if not ok:
+#             span.set_status(Status(StatusCode.ERROR))
+#
+#         # Collapse single-child logical operators
+#         if (
+#             self.collapse_single_child_operators
+#             and span.get_attribute("kompoz.node_type") == "logical"
+#             and self._child_count.get(span, 0) == 1
+#         ):
+#             span.set_attribute("kompoz.collapsed", True)
+#
+#         span.end()
+#         self._span_stack.pop()
+#
+#     def on_error(
+#         self,
+#         span: Any | None,
+#         name: str,
+#         error: Exception,
+#         duration_ms: float,
+#         depth: int,
+#     ) -> None:
+#         if span is None:
+#             return
+#
+#         span.set_attribute("kompoz.success", False)
+#         span.set_attribute("kompoz.duration_ms", duration_ms)
+#         span.set_attribute("kompoz.depth", depth)
+#         span.record_exception(error)
+#         span.set_status(Status(StatusCode.ERROR, str(error)))
+#
+#         span.end()
+#         self._span_stack.pop()
+#
+#     # -------------------------------------------------
+#     # Helpers
+#     # -------------------------------------------------
+#
+#     def _increment_child(self, span: Any) -> None:
+#         self._child_count[span] = self._child_count.get(span, 0) + 1
+#
+#     def _is_predicate(self, name: str) -> bool:
+#         return name.upper().startswith("PREDICATE")
+#
+#     def _annotate_span(self, span: Any, name: str, depth: int) -> None:
+#         upper = name.upper()
+#
+#         if upper in {"AND", "OR", "NOT"}:
+#             span.set_attribute("kompoz.operator", upper)
+#             span.set_attribute("kompoz.node_type", "logical")
+#             span.set_attribute("kompoz.short_circuit", False)
+#         else:
+#             span.set_attribute("kompoz.node_type", "execution")
+#
+#         span.set_attribute("kompoz.name", name)
+#         span.set_attribute("kompoz.depth", depth)
+
+
+# class OpenTelemetryHook:
+#     """
+#     Trace hook for OpenTelemetry integration.
+#
+#     Requires: pip install opentelemetry-api
+#
+#     Example:
+#         from opentelemetry import trace
+#         tracer = trace.get_tracer("kompoz")
+#
+#         with use_tracing(OpenTelemetryHook(tracer)):
+#             rule.run(user)
+#     """
+#
+#     def __init__(self, tracer, span_prefix: str = "kompoz"):
+#         self.tracer = tracer
+#         self.span_prefix = span_prefix
+#
+#     def on_enter(self, name: str, ctx: Any, depth: int) -> Any:
+#         span_name = f"{self.span_prefix}.{name}"
+#         span = self.tracer.start_span(span_name)
+#         span.set_attribute("kompoz.depth", depth)
+#         span.set_attribute("kompoz.combinator", name)
+#         return span
+#
+#     def on_exit(
+#         self, span: Any, name: str, ok: bool, duration_ms: float, depth: int
+#     ) -> None:
+#         from opentelemetry.trace import Status, StatusCode
+#
+#         span.set_attribute("kompoz.success", ok)
+#         span.set_attribute("kompoz.duration_ms", duration_ms)
+#         if not ok:
+#             span.set_status(Status(StatusCode.ERROR))
+#         span.end()
+#
+#     def on_error(
+#         self, span: Any, name: str, error: Exception, duration_ms: float, depth: int
+#     ) -> None:
+#         from opentelemetry.trace import Status, StatusCode
+#
+#         span.set_attribute("kompoz.success", False)
+#         span.set_attribute("kompoz.duration_ms", duration_ms)
+#         span.record_exception(error)
+#         span.set_status(Status(StatusCode.ERROR, str(error)))
+#         span.end()
 
 
 # =============================================================================
