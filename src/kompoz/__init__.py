@@ -76,13 +76,16 @@ __all__ = [
     # Async
     "AsyncCombinator",
     "AsyncPredicate",
+    "AsyncPredicateFactory",
     "AsyncTransform",
+    "AsyncTransformFactory",
     "async_rule",
     "async_rule_args",
     "async_pipe",
     "async_pipe_args",
     # Caching
     "CachedPredicate",
+    "CachedPredicateFactory",
     "use_cache",
     "cached_rule",
     # Retry
@@ -489,7 +492,7 @@ class TraceHook(Protocol):
                 return None  # span token
 
             def on_exit(self, span, name, ok, duration_ms, depth):
-                status = "✓" if ok else "✗"
+                status = "âœ“" if ok else "âœ—"
                 print(f"{'  ' * depth}<- {name} {status} ({duration_ms:.2f}ms)")
 
             def on_error(self, span, name, error, duration_ms, depth):
@@ -731,9 +734,9 @@ class PrintHook:
 
         # Output:
         # -> Predicate(is_admin)
-        # <- Predicate(is_admin) ✗ (0.02ms)
+        # <- Predicate(is_admin) âœ— (0.02ms)
         # -> Predicate(is_active)
-        # <- Predicate(is_active) ✓ (0.01ms)
+        # <- Predicate(is_active) âœ“ (0.01ms)
     """
 
     def __init__(self, indent: str = "  ", show_ctx: bool = False):
@@ -752,7 +755,7 @@ class PrintHook:
         self, span: float, name: str, ok: bool, duration_ms: float, depth: int
     ) -> None:
         prefix = self.indent * depth
-        status = "✓" if ok else "✗"
+        status = "âœ“" if ok else "âœ—"
         print(f"{prefix}<- {name} {status} ({duration_ms:.2f}ms)")
 
     def on_error(
@@ -823,19 +826,23 @@ class OpenTelemetryHook:
     def on_exit(
         self, span: Any, name: str, ok: bool, duration_ms: float, depth: int
     ) -> None:
+        from opentelemetry.trace import Status, StatusCode
+
         span.set_attribute("kompoz.success", ok)
         span.set_attribute("kompoz.duration_ms", duration_ms)
         if not ok:
-            span.set_status(self.tracer.Status(self.tracer.StatusCode.ERROR))
+            span.set_status(Status(StatusCode.ERROR))
         span.end()
 
     def on_error(
         self, span: Any, name: str, error: Exception, duration_ms: float, depth: int
     ) -> None:
+        from opentelemetry.trace import Status, StatusCode
+
         span.set_attribute("kompoz.success", False)
         span.set_attribute("kompoz.duration_ms", duration_ms)
         span.record_exception(error)
-        span.set_status(self.tracer.Status(self.tracer.StatusCode.ERROR, str(error)))
+        span.set_status(Status(StatusCode.ERROR, str(error)))
         span.end()
 
 
@@ -861,10 +868,10 @@ def explain(combinator: Combinator, verbose: bool = False) -> str:
 
         # Output:
         # Check passes if ANY of:
-        #   • is_admin
-        #   • ALL of:
-        #     • is_active
-        #     • NOT: is_banned
+        #   * is_admin
+        #   * ALL of:
+        #     * is_active
+        #     * NOT: is_banned
     """
     return _explain(combinator, depth=0, verbose=verbose)
 
@@ -872,7 +879,7 @@ def explain(combinator: Combinator, verbose: bool = False) -> str:
 def _explain(combinator: Combinator, depth: int, verbose: bool) -> str:
     """Recursive explain implementation."""
     indent = "  " * depth
-    bullet = "• " if depth > 0 else ""
+    bullet = "* " if depth > 0 else ""
 
     if isinstance(combinator, Predicate):
         return f"{indent}{bullet}Check: {combinator.name}"
@@ -1057,7 +1064,7 @@ class ValidatingPredicate(ValidatingCombinator[T]):
         # String interpolation with ctx
         try:
             return self._error.format(ctx=ctx)
-        except (KeyError, AttributeError):
+        except (KeyError, AttributeError, IndexError):
             return self._error
 
     def validate(self, ctx: T) -> ValidationResult:
@@ -1266,7 +1273,7 @@ def vrule_args(
                     try:
                         # Now we use 'template_str' instead of 'error'
                         return template_str.format(**format_context)
-                    except (KeyError, IndexError):
+                    except (KeyError, IndexError, AttributeError):
                         return template_str
 
                 err_msg = make_formatted_error
@@ -2038,6 +2045,7 @@ class ExpressionParser:
     AND = "AND"
     OR = "OR"
     NOT = "NOT"
+    THEN = "THEN"
     LPAREN = "LPAREN"
     RPAREN = "RPAREN"
     COMMA = "COMMA"
@@ -2076,6 +2084,9 @@ class ExpressionParser:
             elif ch == "|":
                 self.tokens.append((self.OR, "|"))
                 self.pos += 1
+            elif ch == ">" and self.pos + 1 < len(self.text) and self.text[self.pos + 1] == ">":
+                self.tokens.append((self.THEN, ">>"))
+                self.pos += 2
             elif ch in "~!":
                 self.tokens.append((self.NOT, ch))
                 self.pos += 1
@@ -2111,6 +2122,8 @@ class ExpressionParser:
                     self.tokens.append((self.OR, ident))
                 elif upper == "NOT":
                     self.tokens.append((self.NOT, ident))
+                elif upper == "THEN":
+                    self.tokens.append((self.THEN, ident))
                 else:
                     self.tokens.append((self.IDENT, ident))
 
@@ -2120,17 +2133,27 @@ class ExpressionParser:
         self.tokens.append((self.EOF, None))
 
     def _read_string(self, quote: str) -> str:
-        """Read a quoted string."""
+        """Read a quoted string with escape sequence processing."""
         self.pos += 1  # skip opening quote
-        start = self.pos
+        result = []
         while self.pos < len(self.text) and self.text[self.pos] != quote:
-            if self.text[self.pos] == "\\":
-                self.pos += 2  # skip escape
+            if self.text[self.pos] == "\\" and self.pos + 1 < len(self.text):
+                next_ch = self.text[self.pos + 1]
+                # Handle common escape sequences
+                escape_map = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+                if next_ch in escape_map:
+                    result.append(escape_map[next_ch])
+                else:
+                    # For \' or \" or any other, just use the escaped char
+                    result.append(next_ch)
+                self.pos += 2
             else:
+                result.append(self.text[self.pos])
                 self.pos += 1
-        result = self.text[start : self.pos]
+        if self.pos >= len(self.text):
+            raise ValueError("Unterminated string literal")
         self.pos += 1  # skip closing quote
-        return result
+        return "".join(result)
 
     def _read_number(self) -> int | float:
         """Read a number."""
@@ -2175,14 +2198,15 @@ class ExpressionParser:
         Parse expression and return config dict.
 
         Grammar:
-            expr     = or_expr
-            or_expr  = and_expr (('|' | 'OR') and_expr)*
-            and_expr = not_expr (('&' | 'AND') not_expr)*
-            not_expr = ('~' | 'NOT' | '!')? primary
-            primary  = IDENT args? | '(' expr ')'
-            args     = '(' arg_list? ')'
-            arg_list = arg (',' arg)*
-            arg      = NUMBER | STRING | IDENT
+            expr      = or_expr
+            or_expr   = then_expr (('|' | 'OR') then_expr)*
+            then_expr = and_expr (('>>' | 'THEN') and_expr)*
+            and_expr  = not_expr (('&' | 'AND') not_expr)*
+            not_expr  = ('~' | 'NOT' | '!')? primary
+            primary   = IDENT args? | '(' expr ')'
+            args      = '(' arg_list? ')'
+            arg_list  = arg (',' arg)*
+            arg       = NUMBER | STRING | IDENT
         """
         result = self._parse_or()
         if self._peek()[0] != self.EOF:
@@ -2191,16 +2215,29 @@ class ExpressionParser:
 
     def _parse_or(self) -> dict | str:
         """Parse OR expression (lowest precedence)."""
-        left = self._parse_and()
+        left = self._parse_then()
 
         items = [left]
         while self._peek()[0] == self.OR:
+            self._consume()
+            items.append(self._parse_then())
+
+        if len(items) == 1:
+            return items[0]
+        return {"or": items}
+
+    def _parse_then(self) -> dict | str:
+        """Parse THEN expression (sequence, runs both)."""
+        left = self._parse_and()
+
+        items = [left]
+        while self._peek()[0] == self.THEN:
             self._consume()
             items.append(self._parse_and())
 
         if len(items) == 1:
             return items[0]
-        return {"or": items}
+        return {"then": items}
 
     def _parse_and(self) -> dict | str:
         """Parse AND expression."""
@@ -2433,6 +2470,10 @@ class Registry(Generic[T]):
 
             elif key == "not":
                 return ~self._build(value)
+
+            elif key == "then":
+                items = [self._build(item) for item in value]
+                return self._combine_seq(items)
 
             # Parameterized predicate/transform
             else:

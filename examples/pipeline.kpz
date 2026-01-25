@@ -1,0 +1,13 @@
+# pipeline.kpz - Data Pipeline Example
+# Demonstrates the >> (THEN) operator for sequencing transforms
+#
+# The >> operator runs BOTH sides regardless of success/failure,
+# and returns the result of the RIGHT side.
+#
+# This is different from & which short-circuits on failure.
+
+# Basic pipeline: parse -> validate -> transform -> format
+parse_input >> validate_schema >> normalize >> format_output
+
+# Alternative word syntax:
+# parse_input THEN validate_schema THEN normalize THEN format_output
