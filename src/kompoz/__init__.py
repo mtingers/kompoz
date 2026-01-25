@@ -923,10 +923,10 @@ def explain(combinator: Combinator, verbose: bool = False) -> str:
 
         # Output:
         # Check passes if ANY of:
-        #   * is_admin
-        #   * ALL of:
-        #     * is_active
-        #     * NOT: is_banned
+        #   • is_admin
+        #   • ALL of:
+        #     • is_active
+        #     • NOT: is_banned
     """
     return _explain(combinator, depth=0, verbose=verbose)
 
@@ -934,7 +934,7 @@ def explain(combinator: Combinator, verbose: bool = False) -> str:
 def _explain(combinator: Combinator, depth: int, verbose: bool) -> str:
     """Recursive explain implementation."""
     indent = "  " * depth
-    bullet = "* " if depth > 0 else ""
+    bullet = "• " if depth > 0 else ""
 
     if isinstance(combinator, Predicate):
         return f"{indent}{bullet}Check: {combinator.name}"
