@@ -20,6 +20,7 @@
     - [Operator Precedence](#operator-precedence)
     - [Load from File](#load-from-file)
   - [Type Hints](#type-hints)
+  - [Pydantic Compatibility](#pydantic-compatibility)
   - [Testing](#testing)
   - [Use Cases](#use-cases)
     - [Access Control](#access-control)
@@ -306,6 +307,20 @@ Both symbol and word syntax are supported:
 | `>>`   | `THEN` | Always run both, keep second result|
 | `()`   |        | Grouping                           |
 
+### Modifiers
+
+Postfix modifiers add retry and caching behavior:
+
+| Modifier                  | Meaning                              |
+| ------------------------- | ------------------------------------ |
+| `:retry(n)`               | Retry up to n times on failure       |
+| `:retry(n, backoff)`      | Retry with backoff delay (seconds)   |
+| `:retry(n, b, true)`      | Exponential backoff                  |
+| `:retry(n, b, true, j)`   | With jitter                          |
+| `:cached`                 | Cache result within `use_cache()` scope |
+
+Modifiers can be chained: `rule:cached:retry(3)`
+
 ### Examples
 
 ```python
@@ -424,6 +439,60 @@ reg: Registry[User] = Registry()
 ```
 
 The `@rule` decorator returns `Predicate[T]`, while `@rule_args` returns a factory that produces `Predicate[T]`. This separation ensures Pyright can properly infer types.
+
+## Pydantic Compatibility
+
+Kompoz works seamlessly with Pydantic models:
+
+```python
+from pydantic import BaseModel, EmailStr
+from kompoz import rule, rule_args, vrule_args, Registry
+
+class User(BaseModel):
+    name: str
+    email: EmailStr
+    is_admin: bool = False
+    is_active: bool = True
+    account_age_days: int = 0
+    credit_score: int = 500
+
+# Rules work with Pydantic models just like dataclasses
+@rule
+def is_admin(user: User) -> bool:
+    return user.is_admin
+
+@rule
+def is_active(user: User) -> bool:
+    return user.is_active
+
+@rule_args
+def credit_above(user: User, threshold: int) -> bool:
+    return user.credit_score > threshold
+
+# Compose rules
+can_trade = is_active & credit_above(600)
+
+# Use with Pydantic model
+user = User(name="Alice", email="alice@example.com", credit_score=750)
+ok, _ = can_trade.run(user)  # True
+
+# Validation rules with Pydantic
+@vrule_args(error="User {ctx.name} must have credit score above {score}")
+def credit_at_least(user: User, score: int) -> bool:
+    return user.credit_score >= score
+
+# Registry with Pydantic models
+reg = Registry[User]()
+
+@reg.predicate
+def is_verified(user: User) -> bool:
+    return user.is_active and user.account_age_days > 30
+
+# Load from DSL
+rule = reg.load("is_admin | (is_active & is_verified)")
+```
+
+Since Pydantic models behave like regular Python objects with attribute access, all Kompoz features work out of the box — including validation, async rules, caching, and the expression DSL.
 
 ## Testing
 

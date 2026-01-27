@@ -3228,7 +3228,8 @@ class ExpressionParser:
     Operators (by precedence, lowest to highest):
         |, OR       - Any must pass (lowest precedence)
         &, AND      - All must pass
-        ~, NOT, !   - Invert result (highest precedence)
+        ~, NOT, !   - Invert result
+        :modifier   - Apply modifier (highest precedence)
 
     Grouping:
         ( )         - Override precedence
@@ -3237,6 +3238,15 @@ class ExpressionParser:
         rule_name                   - Simple rule
         rule_name(arg)              - Rule with one argument
         rule_name(arg1, arg2)       - Rule with multiple arguments
+
+    Modifiers (postfix syntax):
+        rule:retry(n)               - Retry up to n times
+        rule:retry(n, backoff)      - With backoff delay in seconds
+        rule:retry(n, backoff, true)  - Exponential backoff
+        rule:retry(n, backoff, true, jitter)  - With jitter
+        rule:cached                 - Cache results within use_cache() scope
+        (expr):modifier             - Apply to grouped expression
+        rule:mod1:mod2              - Chain multiple modifiers
 
     Multi-line expressions are supported (newlines are ignored).
 
@@ -3249,6 +3259,12 @@ class ExpressionParser:
         NOT is_banned
         is_admin & (is_active | is_premium)
         account_older_than(30) & credit_above(700)
+
+        # Modifiers
+        fetch_data:retry(3)
+        fetch_data:retry(5, 1.0, true)
+        expensive_check:cached
+        (primary | fallback):retry(3)
 
         # Multi-line
         is_admin
@@ -3264,10 +3280,15 @@ class ExpressionParser:
     LPAREN = "LPAREN"
     RPAREN = "RPAREN"
     COMMA = "COMMA"
+    COLON = "COLON"  # For modifier syntax (:retry, :cached)
     IDENT = "IDENT"
     NUMBER = "NUMBER"
     STRING = "STRING"
+    BOOL = "BOOL"  # For true/false literals
     EOF = "EOF"
+
+    # Reserved modifier keywords
+    MODIFIERS = {"retry", "cached"}
 
     def __init__(self, text: str):
         self.text = text
@@ -3318,6 +3339,9 @@ class ExpressionParser:
             elif ch == ",":
                 self.tokens.append((self.COMMA, ","))
                 self.pos += 1
+            elif ch == ":":
+                self.tokens.append((self.COLON, ":"))
+                self.pos += 1
 
             # Strings
             elif ch in "\"'":
@@ -3335,6 +3359,7 @@ class ExpressionParser:
             elif ch.isalpha() or ch == "_":
                 ident = self._read_ident()
                 upper = ident.upper()
+                lower = ident.lower()
                 if upper == "AND":
                     self.tokens.append((self.AND, ident))
                 elif upper == "OR":
@@ -3343,6 +3368,8 @@ class ExpressionParser:
                     self.tokens.append((self.NOT, ident))
                 elif upper == "THEN":
                     self.tokens.append((self.THEN, ident))
+                elif lower in ("true", "false"):
+                    self.tokens.append((self.BOOL, lower == "true"))
                 else:
                     self.tokens.append((self.IDENT, ident))
 
@@ -3421,11 +3448,16 @@ class ExpressionParser:
             or_expr   = then_expr (('|' | 'OR') then_expr)*
             then_expr = and_expr (('>>' | 'THEN') and_expr)*
             and_expr  = not_expr (('&' | 'AND') not_expr)*
-            not_expr  = ('~' | 'NOT' | '!')? primary
+            not_expr  = ('~' | 'NOT' | '!')? postfix
+            postfix   = primary (':' MODIFIER args?)*
             primary   = IDENT args? | '(' expr ')'
             args      = '(' arg_list? ')'
             arg_list  = arg (',' arg)*
-            arg       = NUMBER | STRING | IDENT
+            arg       = NUMBER | STRING | IDENT | BOOL
+
+        Modifiers:
+            :retry(max_attempts, [backoff], [exponential], [jitter])
+            :cached
         """
         result = self._parse_or()
         if self._peek()[0] != self.EOF:
@@ -3477,7 +3509,42 @@ class ExpressionParser:
             self._consume()
             inner = self._parse_not()  # Allow chained NOT
             return {"not": inner}
-        return self._parse_primary()
+        return self._parse_postfix()
+
+    def _parse_postfix(self) -> dict | str:
+        """Parse primary with optional :modifier suffixes."""
+        result = self._parse_primary()
+
+        # Check for chained modifiers like :retry(3):cached
+        while self._peek()[0] == self.COLON:
+            self._consume()  # consume ':'
+
+            # Expect modifier name
+            if self._peek()[0] != self.IDENT:
+                raise ValueError(
+                    f"Expected modifier name after ':', got {self._peek()}"
+                )
+
+            modifier = self._consume()[1].lower()
+            if modifier not in self.MODIFIERS:
+                raise ValueError(
+                    f"Unknown modifier '{modifier}'. Valid modifiers: {self.MODIFIERS}"
+                )
+
+            # Check for optional arguments
+            args: list[Any] = []
+            if self._peek()[0] == self.LPAREN:
+                self._consume()  # (
+                args = self._parse_args()
+                self._expect(self.RPAREN)  # )
+
+            # Wrap result with modifier
+            if modifier == "retry":
+                result = {"retry": {"inner": result, "args": args}}
+            elif modifier == "cached":
+                result = {"cached": result}
+
+        return result
 
     def _parse_primary(self) -> dict | str:
         """Parse primary expression (identifier or grouped expr)."""
@@ -3526,6 +3593,8 @@ class ExpressionParser:
             return self._consume()[1]
         if token[0] == self.STRING:
             return self._consume()[1]
+        if token[0] == self.BOOL:
+            return self._consume()[1]
         if token[0] == self.IDENT:
             # Treat bare identifiers as strings
             return self._consume()[1]
@@ -3548,6 +3617,37 @@ def parse_expression(text: str) -> dict | str:
         {'and': ['is_admin', {'not': 'is_banned'}]}
     """
     return ExpressionParser(text).parse()
+
+
+class _CachedCombinatorWrapper(Combinator[T]):
+    """
+    Internal wrapper to cache any combinator's result.
+
+    Used by Registry when :cached modifier is applied to non-Predicate combinators.
+    The cache is keyed by object id and is shared across all instances.
+    """
+
+    _cache: dict[int, tuple[bool, Any]] = {}
+
+    def __init__(self, inner: Combinator[T]):
+        self.inner = inner
+
+    def _execute(self, ctx: T) -> tuple[bool, T]:
+        # Check if caching is enabled via use_cache()
+        cache = _cache_store.get()
+        if cache is not None:
+            key = f"_wrapped:{id(self.inner)}:{id(ctx)}"
+            if key in cache:
+                return cache[key]
+            result = self.inner._execute(ctx)
+            cache[key] = result
+            return result
+
+        # No cache scope, just execute
+        return self.inner._execute(ctx)
+
+    def __repr__(self) -> str:
+        return f"Cached({self.inner!r})"
 
 
 class Registry(Generic[T]):
@@ -3640,6 +3740,15 @@ class Registry(Generic[T]):
             credit_above(700)
             in_role("admin", "moderator")
 
+            # Modifiers (postfix syntax)
+            fetch_data:retry(3)                   # Retry up to 3 times
+            fetch_data:retry(3, 1.0)              # With 1s backoff
+            fetch_data:retry(3, 1.0, true)        # Exponential backoff
+            fetch_data:retry(3, 1.0, true, 0.1)   # With jitter
+            expensive_check:cached                # Cache results
+            (fetch_a | fetch_b):retry(5)          # Retry grouped expr
+            slow_query:cached:retry(3)            # Chain modifiers
+
             # Multi-line (newlines are ignored)
             is_admin
             & is_active
@@ -3654,6 +3763,7 @@ class Registry(Generic[T]):
             OR  (|)  - evaluated last
             AND (&)  - evaluated second
             NOT (~)  - evaluated first
+            Modifiers (:) - highest, binds to immediate left
         """
         config = parse_expression(expr)
         return self._build(config)
@@ -3693,6 +3803,35 @@ class Registry(Generic[T]):
             elif key == "then":
                 items = [self._build(item) for item in value]
                 return self._combine_seq(items)
+
+            # Modifier: retry
+            elif key == "retry":
+                inner = self._build(value["inner"])
+                args = value.get("args", [])
+
+                # Parse retry args: max_attempts, [backoff], [exponential], [jitter]
+                max_attempts = int(args[0]) if len(args) > 0 else 3
+                backoff = float(args[1]) if len(args) > 1 else 0.0
+                exponential = bool(args[2]) if len(args) > 2 else False
+                jitter = float(args[3]) if len(args) > 3 else 0.0
+
+                return Retry(
+                    inner,
+                    max_attempts=max_attempts,
+                    backoff=backoff,
+                    exponential=exponential,
+                    jitter=jitter,
+                )
+
+            # Modifier: cached
+            elif key == "cached":
+                inner = self._build(value)
+                # Wrap in CachedPredicate if it's a predicate
+                if isinstance(inner, Predicate):
+                    return CachedPredicate(inner.fn, inner.name)
+                else:
+                    # For non-predicates, wrap with a generic caching combinator
+                    return _CachedCombinatorWrapper(inner)
 
             # Parameterized predicate/transform
             else:
