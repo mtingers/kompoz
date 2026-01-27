@@ -119,19 +119,34 @@ from datetime import date, datetime
 from typing import (
     Any,
     Generic,
-    Optional,
     Protocol,
     TypeVar,
     overload,
     runtime_checkable,
 )
 
-from opentelemetry.trace import (
-    Link,
-    Status,
-    StatusCode,
-    set_span_in_context,
-)
+# Optional OpenTelemetry imports - only needed if using OpenTelemetryHook
+try:
+    from opentelemetry.trace import (
+        Link as _Link,
+    )
+    from opentelemetry.trace import (
+        Status as _Status,
+    )
+    from opentelemetry.trace import (
+        StatusCode as _StatusCode,
+    )
+    from opentelemetry.trace import (
+        set_span_in_context as _set_span_in_context,
+    )
+
+    _HAS_OPENTELEMETRY = True
+except ImportError:
+    _HAS_OPENTELEMETRY = False
+    _Link = None
+    _Status = None
+    _StatusCode = None
+    _set_span_in_context = None
 
 T = TypeVar("T")
 
@@ -205,16 +220,130 @@ class Combinator(ABC, Generic[T]):
         return self.run(ctx)
 
 
+def _is_composite(combinator: Combinator) -> bool:
+    """Check if combinator is a composite type that needs stack-based execution."""
+    return isinstance(combinator, (_And, _Or, _Not, _Then))
+
+
+def _execute_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]:
+    """
+    Execute a combinator tree iteratively using an explicit stack.
+
+    This avoids deep recursion for complex nested combinators.
+    Uses continuation-passing style with a work stack.
+    """
+    # Stack items: (combinator, context, continuation_type, continuation_data)
+    # continuation_type: None (fresh), 'and_left', 'and_right', 'or_left', 'or_right',
+    #                    'not', 'then_left', 'then_right'
+
+    # Result stack for passing results back up
+    result_stack: list[tuple[bool, T]] = []
+
+    # Work stack: (combinator, ctx, phase)
+    # phase: 0 = initial, 1 = after left, 2 = done
+    work_stack: list[tuple[Combinator[T], T, int, Any]] = [(root, ctx, 0, None)]
+
+    while work_stack:
+        combinator, current_ctx, phase, saved_data = work_stack.pop()
+
+        # Handle _And
+        if isinstance(combinator, _And):
+            if phase == 0:
+                # First, execute left child
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_composite(combinator.left):
+                    work_stack.append((combinator.left, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.left._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            elif phase == 1:
+                # Left done, check result
+                ok, new_ctx = result_stack.pop()
+                if not ok:
+                    result_stack.append((False, new_ctx))
+                else:
+                    # Execute right child
+                    work_stack.append((combinator, new_ctx, 2, None))
+                    if _is_composite(combinator.right):
+                        work_stack.append((combinator.right, new_ctx, 0, None))
+                    else:
+                        ok2, new_ctx2 = combinator.right._execute(new_ctx)
+                        result_stack.append((ok2, new_ctx2))
+            else:  # phase == 2
+                # Right done, result is already on stack
+                pass
+
+        # Handle _Or
+        elif isinstance(combinator, _Or):
+            if phase == 0:
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_composite(combinator.left):
+                    work_stack.append((combinator.left, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.left._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            elif phase == 1:
+                ok, new_ctx = result_stack.pop()
+                if ok:
+                    result_stack.append((True, new_ctx))
+                else:
+                    work_stack.append((combinator, new_ctx, 2, None))
+                    if _is_composite(combinator.right):
+                        work_stack.append((combinator.right, new_ctx, 0, None))
+                    else:
+                        ok2, new_ctx2 = combinator.right._execute(new_ctx)
+                        result_stack.append((ok2, new_ctx2))
+            else:
+                pass
+
+        # Handle _Not
+        elif isinstance(combinator, _Not):
+            if phase == 0:
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_composite(combinator.inner):
+                    work_stack.append((combinator.inner, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.inner._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            else:
+                ok, new_ctx = result_stack.pop()
+                result_stack.append((not ok, new_ctx))
+
+        # Handle _Then
+        elif isinstance(combinator, _Then):
+            if phase == 0:
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_composite(combinator.left):
+                    work_stack.append((combinator.left, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.left._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            elif phase == 1:
+                _, new_ctx = result_stack.pop()  # Ignore left result
+                work_stack.append((combinator, new_ctx, 2, None))
+                if _is_composite(combinator.right):
+                    work_stack.append((combinator.right, new_ctx, 0, None))
+                else:
+                    ok2, new_ctx2 = combinator.right._execute(new_ctx)
+                    result_stack.append((ok2, new_ctx2))
+            else:
+                pass
+
+        # Handle leaf combinators (shouldn't normally get here from root)
+        else:
+            ok, new_ctx = combinator._execute(current_ctx)
+            result_stack.append((ok, new_ctx))
+
+    return result_stack[-1] if result_stack else (False, ctx)
+
+
 @dataclass
 class _And(Combinator[T]):
     left: Combinator[T]
     right: Combinator[T]
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = self.left._execute(ctx)
-        if not ok:
-            return False, ctx
-        return self.right._execute(ctx)
+        return _execute_iterative(self, ctx)
 
 
 @dataclass
@@ -223,10 +352,7 @@ class _Or(Combinator[T]):
     right: Combinator[T]
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = self.left._execute(ctx)
-        if ok:
-            return True, ctx
-        return self.right._execute(ctx)
+        return _execute_iterative(self, ctx)
 
 
 @dataclass
@@ -234,8 +360,7 @@ class _Not(Combinator[T]):
     inner: Combinator[T]
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = self.inner._execute(ctx)
-        return not ok, ctx
+        return _execute_iterative(self, ctx)
 
 
 @dataclass
@@ -244,8 +369,7 @@ class _Then(Combinator[T]):
     right: Combinator[T]
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        _, ctx = self.left._execute(ctx)
-        return self.right._execute(ctx)
+        return _execute_iterative(self, ctx)
 
 
 # =============================================================================
@@ -638,10 +762,25 @@ def use_tracing(hook: TraceHook, config: TraceConfig | None = None):
 
 def _get_combinator_name(combinator: Combinator) -> str:
     """Get a human-readable name for a combinator."""
+    # Check specific types first (before base classes)
+    # Validating combinators (check before Predicate since ValidatingPredicate inherits Combinator)
+    if isinstance(combinator, ValidatingPredicate):
+        return f"ValidatingPredicate({combinator.name})"
+    if isinstance(combinator, _ValidatingAnd):
+        return "ValidatingAND"
+    if isinstance(combinator, _ValidatingOr):
+        return "ValidatingOR"
+    if isinstance(combinator, _ValidatingNot):
+        return "ValidatingNOT"
+    # Cached predicate (check before Predicate)
+    if isinstance(combinator, CachedPredicate):
+        return f"CachedPredicate({combinator.name})"
+    # Base predicates and transforms
     if isinstance(combinator, Predicate):
         return f"Predicate({combinator.name})"
     if isinstance(combinator, Transform):
         return f"Transform({combinator.name})"
+    # Composite combinators
     if isinstance(combinator, _And):
         return "AND"
     if isinstance(combinator, _Or):
@@ -650,6 +789,7 @@ def _get_combinator_name(combinator: Combinator) -> str:
         return "NOT"
     if isinstance(combinator, _Then):
         return "THEN"
+    # Utility combinators
     if isinstance(combinator, Always):
         return "Always"
     if isinstance(combinator, Never):
@@ -658,6 +798,22 @@ def _get_combinator_name(combinator: Combinator) -> str:
         return f"Debug({combinator.label})"
     if isinstance(combinator, Try):
         return f"Try({combinator.name})"
+    # Retry
+    if isinstance(combinator, Retry):
+        return f"Retry({combinator.name})"
+    # Temporal combinators
+    if isinstance(combinator, during_hours):
+        return repr(combinator)
+    if isinstance(combinator, on_weekdays):
+        return "on_weekdays()"
+    if isinstance(combinator, on_days):
+        return repr(combinator)
+    if isinstance(combinator, after_date):
+        return repr(combinator)
+    if isinstance(combinator, before_date):
+        return repr(combinator)
+    if isinstance(combinator, between_dates):
+        return repr(combinator)
     return repr(combinator)
 
 
@@ -668,20 +824,94 @@ def _traced_run(
     config: TraceConfig,
     depth: int = 0,
 ) -> tuple[bool, T]:
-    """Execute a combinator with tracing."""
+    """Execute a combinator with tracing (using flattening to avoid deep recursion)."""
+    return _traced_run_impl(combinator, ctx, hook, config, depth)
 
+
+def _is_traced_composite(combinator: Combinator) -> bool:
+    """Check if combinator is a composite type for tracing."""
+    return isinstance(
+        combinator,
+        (_And, _Or, _Not, _Then, _ValidatingAnd, _ValidatingOr, _ValidatingNot),
+    )
+
+
+def _flatten_and_chain(combinator: Combinator[T]) -> list[Combinator[T]]:
+    """Flatten nested AND combinators into a list (iteratively)."""
+    result: list[Combinator[T]] = []
+    stack: list[Combinator[T]] = [combinator]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (_And, _ValidatingAnd)):
+            stack.append(current.right)
+            stack.append(current.left)
+        else:
+            result.append(current)
+    return result
+
+
+def _flatten_or_chain(combinator: Combinator[T]) -> list[Combinator[T]]:
+    """Flatten nested OR combinators into a list (iteratively)."""
+    result: list[Combinator[T]] = []
+    stack: list[Combinator[T]] = [combinator]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (_Or, _ValidatingOr)):
+            stack.append(current.right)
+            stack.append(current.left)
+        else:
+            result.append(current)
+    return result
+
+
+def _flatten_then_chain(combinator: Combinator[T]) -> list[Combinator[T]]:
+    """Flatten nested THEN combinators into a list (iteratively)."""
+    result: list[Combinator[T]] = []
+    stack: list[Combinator[T]] = [combinator]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, _Then):
+            stack.append(current.right)
+            stack.append(current.left)
+        else:
+            result.append(current)
+    return result
+
+
+def _unwrap_not(combinator: Combinator[T]) -> tuple[Combinator[T], int]:
+    """Unwrap chained NOTs and return (inner, count)."""
+    count = 0
+    current = combinator
+    while isinstance(current, (_Not, _ValidatingNot)):
+        count += 1
+        current = current.inner
+    return current, count
+
+
+def _traced_run_impl(
+    combinator: Combinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig,
+    depth: int,
+) -> tuple[bool, T]:
+    """
+    Execute a combinator with tracing.
+
+    Uses flattening for chains to avoid deep recursion, while still
+    providing proper trace events for each node.
+    """
     # Check depth limit
     if config.max_depth is not None and depth > config.max_depth:
         return combinator._execute(ctx)
 
     name = _get_combinator_name(combinator)
-    is_composite = isinstance(combinator, (_And, _Or, _Not, _Then))
+    is_composite = _is_traced_composite(combinator)
 
     # Skip composite combinators if leaf_only mode
     if config.include_leaf_only and is_composite:
-        # Still recurse into children with tracing
         if config.nested:
-            return _traced_run_inner(combinator, ctx, hook, config, depth)
+            return _traced_composite_no_span(combinator, ctx, hook, config, depth)
         return combinator._execute(ctx)
 
     # Call on_enter
@@ -690,47 +920,150 @@ def _traced_run(
 
     try:
         if config.nested and is_composite:
-            ok, result = _traced_run_inner(combinator, ctx, hook, config, depth)
+            ok, result = _traced_composite(
+                combinator, ctx, hook, config, depth, span, name, start
+            )
         else:
             ok, result = combinator._execute(ctx)
+            duration_ms = (time.perf_counter() - start) * 1000
+            hook.on_exit(span, name, ok, duration_ms, depth)
 
-        duration_ms = (time.perf_counter() - start) * 1000
-        hook.on_exit(span, name, ok, duration_ms, depth)
         return ok, result
 
     except Exception as e:
         duration_ms = (time.perf_counter() - start) * 1000
-        # Call on_error - it's part of the TraceHook protocol
         hook.on_error(span, name, e, duration_ms, depth)
         raise
 
 
-def _traced_run_inner(
-    combinator: Combinator[T], ctx: T, hook: TraceHook, config: TraceConfig, depth: int
+def _traced_composite(
+    combinator: Combinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig,
+    depth: int,
+    span: Any,
+    name: str,
+    start: float,
 ) -> tuple[bool, T]:
-    """Handle tracing for composite combinators."""
+    """Handle tracing for composite combinators with proper span management."""
 
-    if isinstance(combinator, _And):
-        ok, ctx = _traced_run(combinator.left, ctx, hook, config, depth + 1)
-        if not ok:
-            return False, ctx
-        return _traced_run(combinator.right, ctx, hook, config, depth + 1)
+    # Handle AND chains
+    if isinstance(combinator, (_And, _ValidatingAnd)):
+        children = _flatten_and_chain(combinator)
+        current_ctx = ctx
+        for child in children:
+            ok, current_ctx = _traced_run_impl(
+                child, current_ctx, hook, config, depth + 1
+            )
+            if not ok:
+                duration_ms = (time.perf_counter() - start) * 1000
+                hook.on_exit(span, name, False, duration_ms, depth)
+                return False, current_ctx
+        duration_ms = (time.perf_counter() - start) * 1000
+        hook.on_exit(span, name, True, duration_ms, depth)
+        return True, current_ctx
 
-    if isinstance(combinator, _Or):
-        ok, ctx = _traced_run(combinator.left, ctx, hook, config, depth + 1)
-        if ok:
-            return True, ctx
-        return _traced_run(combinator.right, ctx, hook, config, depth + 1)
+    # Handle OR chains
+    if isinstance(combinator, (_Or, _ValidatingOr)):
+        children = _flatten_or_chain(combinator)
+        current_ctx = ctx
+        for child in children:
+            ok, current_ctx = _traced_run_impl(
+                child, current_ctx, hook, config, depth + 1
+            )
+            if ok:
+                duration_ms = (time.perf_counter() - start) * 1000
+                hook.on_exit(span, name, True, duration_ms, depth)
+                return True, current_ctx
+        duration_ms = (time.perf_counter() - start) * 1000
+        hook.on_exit(span, name, False, duration_ms, depth)
+        return False, current_ctx
 
-    if isinstance(combinator, _Not):
-        ok, result = _traced_run(combinator.inner, ctx, hook, config, depth + 1)
-        return not ok, result
+    # Handle NOT (with chained NOT unwrapping)
+    if isinstance(combinator, (_Not, _ValidatingNot)):
+        inner, invert_count = _unwrap_not(combinator)
+        ok, result = _traced_run_impl(inner, ctx, hook, config, depth + 1)
+        if invert_count % 2 == 1:
+            ok = not ok
+        duration_ms = (time.perf_counter() - start) * 1000
+        hook.on_exit(span, name, ok, duration_ms, depth)
+        return ok, result
 
+    # Handle THEN chains
     if isinstance(combinator, _Then):
-        _, ctx = _traced_run(combinator.left, ctx, hook, config, depth + 1)
-        return _traced_run(combinator.right, ctx, hook, config, depth + 1)
+        children = _flatten_then_chain(combinator)
+        current_ctx = ctx
+        for child in children[:-1]:
+            _, current_ctx = _traced_run_impl(
+                child, current_ctx, hook, config, depth + 1
+            )
+        ok, current_ctx = _traced_run_impl(
+            children[-1], current_ctx, hook, config, depth + 1
+        )
+        duration_ms = (time.perf_counter() - start) * 1000
+        hook.on_exit(span, name, ok, duration_ms, depth)
+        return ok, current_ctx
 
-    # Fallback for unknown composite types
+    # Fallback - shouldn't reach here for known composites
+    ok, result = combinator._execute(ctx)
+    duration_ms = (time.perf_counter() - start) * 1000
+    hook.on_exit(span, name, ok, duration_ms, depth)
+    return ok, result
+
+
+def _traced_composite_no_span(
+    combinator: Combinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig,
+    depth: int,
+) -> tuple[bool, T]:
+    """Handle composite tracing in leaf_only mode (no span for this node)."""
+
+    # Handle AND chains
+    if isinstance(combinator, (_And, _ValidatingAnd)):
+        children = _flatten_and_chain(combinator)
+        current_ctx = ctx
+        for child in children:
+            ok, current_ctx = _traced_run_impl(
+                child, current_ctx, hook, config, depth + 1
+            )
+            if not ok:
+                return False, current_ctx
+        return True, current_ctx
+
+    # Handle OR chains
+    if isinstance(combinator, (_Or, _ValidatingOr)):
+        children = _flatten_or_chain(combinator)
+        current_ctx = ctx
+        for child in children:
+            ok, current_ctx = _traced_run_impl(
+                child, current_ctx, hook, config, depth + 1
+            )
+            if ok:
+                return True, current_ctx
+        return False, current_ctx
+
+    # Handle NOT
+    if isinstance(combinator, (_Not, _ValidatingNot)):
+        inner, invert_count = _unwrap_not(combinator)
+        ok, result = _traced_run_impl(inner, ctx, hook, config, depth + 1)
+        if invert_count % 2 == 1:
+            ok = not ok
+        return ok, result
+
+    # Handle THEN chains
+    if isinstance(combinator, _Then):
+        children = _flatten_then_chain(combinator)
+        current_ctx = ctx
+        for child in children[:-1]:
+            _, current_ctx = _traced_run_impl(
+                child, current_ctx, hook, config, depth + 1
+            )
+        return _traced_run_impl(children[-1], current_ctx, hook, config, depth + 1)
+
+    # Fallback
     return combinator._execute(ctx)
 
 
@@ -876,6 +1209,8 @@ class OpenTelemetryHook:
     - Short-circuit evaluation tagging
     - Optional sibling span linking
     - Trace-derived metric attributes
+
+    Requires: pip install opentelemetry-api
     """
 
     def __init__(
@@ -887,6 +1222,11 @@ class OpenTelemetryHook:
         collapse_single_child_operators: bool = True,
         predicates_as_events: bool = False,
     ):
+        if not _HAS_OPENTELEMETRY:
+            raise ImportError(
+                "OpenTelemetry is not installed. "
+                "Install it with: pip install opentelemetry-api"
+            )
         self.tracer = tracer
         self.max_span_depth = max_span_depth
         self.link_sibling_spans = link_sibling_spans
@@ -902,12 +1242,16 @@ class OpenTelemetryHook:
     # -------------------------------------------------
 
     def on_enter(self, name: str, ctx: Any, depth: int) -> Any:
+        # These are guaranteed non-None because __init__ checks _HAS_OPENTELEMETRY
+        assert _set_span_in_context is not None
+        assert _Link is not None
+
         # Depth-based suppression
         if self.max_span_depth is not None and depth > self.max_span_depth:
             return None
 
         parent = self._span_stack[-1] if self._span_stack else None
-        parent_ctx = set_span_in_context(parent) if parent else None
+        parent_ctx = _set_span_in_context(parent) if parent else None
 
         # Predicate-as-event optimization
         if self.predicates_as_events and parent and self._is_predicate(name):
@@ -923,7 +1267,7 @@ class OpenTelemetryHook:
 
         links = []
         if self.link_sibling_spans and depth in self._last_span_at_depth:
-            links.append(Link(self._last_span_at_depth[depth].get_span_context()))
+            links.append(_Link(self._last_span_at_depth[depth].get_span_context()))
 
         span = self.tracer.start_span(
             name,
@@ -952,12 +1296,16 @@ class OpenTelemetryHook:
         if span is None:
             return
 
+        # These are guaranteed non-None because __init__ checks _HAS_OPENTELEMETRY
+        assert _Status is not None
+        assert _StatusCode is not None
+
         span.set_attribute("kompoz.success", ok)
         span.set_attribute("kompoz.duration_ms", duration_ms)
         span.set_attribute("kompoz.depth", depth)
 
         if not ok:
-            span.set_status(Status(StatusCode.ERROR))
+            span.set_status(_Status(_StatusCode.ERROR))
 
         # Collapse single-child logical operators
         if (
@@ -981,11 +1329,15 @@ class OpenTelemetryHook:
         if span is None:
             return
 
+        # These are guaranteed non-None because __init__ checks _HAS_OPENTELEMETRY
+        assert _Status is not None
+        assert _StatusCode is not None
+
         span.set_attribute("kompoz.success", False)
         span.set_attribute("kompoz.duration_ms", duration_ms)
         span.set_attribute("kompoz.depth", depth)
         span.record_exception(error)
-        span.set_status(Status(StatusCode.ERROR, str(error)))
+        span.set_status(_Status(_StatusCode.ERROR, str(error)))
 
         span.end()
         self._span_stack.pop()
@@ -1240,108 +1592,291 @@ def explain(combinator: Combinator, verbose: bool = False) -> str:
         #     • is_active
         #     • NOT: is_banned
     """
-    return _explain(combinator, depth=0, verbose=verbose)
+    return _explain_iterative(combinator, verbose=verbose)
 
 
-def _explain(combinator: Combinator, depth: int, verbose: bool) -> str:
-    """Recursive explain implementation."""
-    indent = "  " * depth
-    bullet = "• " if depth > 0 else ""
+def _explain_iterative(combinator: Combinator, verbose: bool) -> str:
+    """Iterative explain implementation using a stack."""
+    # Stack items: (combinator, depth, output_index)
+    # output_index is where to insert this node's output in the results list
 
-    if isinstance(combinator, Predicate):
-        return f"{indent}{bullet}Check: {combinator.name}"
+    # We'll build a list of (depth, text) tuples, then join them
+    output_lines: list[tuple[int, str]] = []
 
-    if isinstance(combinator, Transform):
-        return f"{indent}{bullet}Transform: {combinator.name}"
+    # Stack: (combinator, depth)
+    # We process in reverse order so output is in correct order
+    stack: list[tuple[Combinator, int]] = [(combinator, 0)]
 
-    if isinstance(combinator, _And):
-        # Collect all AND children (flatten nested ANDs)
-        children = _collect_chain(combinator, _And, "left", "right")
-        child_explains = [_explain(c, depth + 1, verbose) for c in children]
+    while stack:
+        comb, depth = stack.pop()
+        indent = "  " * depth
+        bullet = "• " if depth > 0 else ""
 
-        if depth == 0:
-            header = "Check passes if ALL of:"
+        # Check specific types first (before base classes)
+        # Validating combinators
+        if isinstance(comb, ValidatingPredicate):
+            output_lines.append((depth, f"{indent}{bullet}Validate: {comb.name}"))
+
+        elif isinstance(comb, _ValidatingAnd):
+            children = _collect_chain(comb, _ValidatingAnd, "left", "right")
+            if depth == 0:
+                header = "Validate ALL of (collect errors):"
+            else:
+                header = f"{indent}{bullet}ALL of (collect errors):"
+            output_lines.append((depth, header))
+            # Add children in reverse order so they appear in correct order
+            for child in reversed(children):
+                stack.append((child, depth + 1))
+
+        elif isinstance(comb, _ValidatingOr):
+            children = _collect_chain(comb, _ValidatingOr, "left", "right")
+            if depth == 0:
+                header = "Validate ANY of:"
+            else:
+                header = f"{indent}{bullet}ANY of:"
+            output_lines.append((depth, header))
+            for child in reversed(children):
+                stack.append((child, depth + 1))
+
+        elif isinstance(comb, _ValidatingNot):
+            inner = _explain_inline_iterative(comb.inner)
+            output_lines.append((depth, f"{indent}{bullet}NOT (validating): {inner}"))
+
+        # Cached predicate
+        elif isinstance(comb, CachedPredicate):
+            output_lines.append((depth, f"{indent}{bullet}Cached check: {comb.name}"))
+
+        # Base predicate and transform
+        elif isinstance(comb, Predicate):
+            output_lines.append((depth, f"{indent}{bullet}Check: {comb.name}"))
+
+        elif isinstance(comb, Transform):
+            output_lines.append((depth, f"{indent}{bullet}Transform: {comb.name}"))
+
+        # Standard composite combinators
+        elif isinstance(comb, _And):
+            children = _collect_chain(comb, _And, "left", "right")
+            if depth == 0:
+                header = "Check passes if ALL of:"
+            else:
+                header = f"{indent}{bullet}ALL of:"
+            output_lines.append((depth, header))
+            for child in reversed(children):
+                stack.append((child, depth + 1))
+
+        elif isinstance(comb, _Or):
+            children = _collect_chain(comb, _Or, "left", "right")
+            if depth == 0:
+                header = "Check passes if ANY of:"
+            else:
+                header = f"{indent}{bullet}ANY of:"
+            output_lines.append((depth, header))
+            for child in reversed(children):
+                stack.append((child, depth + 1))
+
+        elif isinstance(comb, _Not):
+            inner = _explain_inline_iterative(comb.inner)
+            output_lines.append((depth, f"{indent}{bullet}NOT: {inner}"))
+
+        elif isinstance(comb, _Then):
+            children = _collect_chain(comb, _Then, "left", "right")
+            if depth == 0:
+                header = "Execute in sequence (always run all):"
+            else:
+                header = f"{indent}{bullet}Sequence:"
+            output_lines.append((depth, header))
+            for child in reversed(children):
+                stack.append((child, depth + 1))
+
+        # Utility combinators
+        elif isinstance(comb, Always):
+            output_lines.append((depth, f"{indent}{bullet}Always pass"))
+
+        elif isinstance(comb, Never):
+            output_lines.append((depth, f"{indent}{bullet}Always fail"))
+
+        elif isinstance(comb, Debug):
+            output_lines.append((depth, f"{indent}{bullet}Debug: {comb.label}"))
+
+        elif isinstance(comb, Try):
+            output_lines.append(
+                (depth, f"{indent}{bullet}Try: {comb.name} (catch errors)")
+            )
+
+        # Retry
+        elif isinstance(comb, Retry):
+            inner_explain = _explain_inline_iterative(comb.inner)
+            output_lines.append(
+                (
+                    depth,
+                    f"{indent}{bullet}Retry up to {comb.max_attempts}x: {inner_explain}",
+                )
+            )
+
+        # Temporal combinators
+        elif isinstance(comb, during_hours):
+            end_type = (
+                "inclusive" if getattr(comb, "inclusive_end", False) else "exclusive"
+            )
+            output_lines.append(
+                (
+                    depth,
+                    f"{indent}{bullet}During hours {comb.start_hour}:00-{comb.end_hour}:00 ({end_type})",
+                )
+            )
+
+        elif isinstance(comb, on_weekdays):
+            output_lines.append((depth, f"{indent}{bullet}On weekdays (Mon-Fri)"))
+
+        elif isinstance(comb, on_days):
+            day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            days_str = ", ".join(day_names[d] for d in sorted(comb.days))
+            output_lines.append((depth, f"{indent}{bullet}On days: {days_str}"))
+
+        elif isinstance(comb, after_date):
+            output_lines.append((depth, f"{indent}{bullet}After {comb.date}"))
+
+        elif isinstance(comb, before_date):
+            output_lines.append((depth, f"{indent}{bullet}Before {comb.date}"))
+
+        elif isinstance(comb, between_dates):
+            output_lines.append(
+                (
+                    depth,
+                    f"{indent}{bullet}Between {comb.start_date} and {comb.end_date}",
+                )
+            )
+
+        # Fallback
         else:
-            header = f"{indent}{bullet}ALL of:"
+            output_lines.append((depth, f"{indent}{bullet}{repr(comb)}"))
 
-        return header + "\n" + "\n".join(child_explains)
-
-    if isinstance(combinator, _Or):
-        # Collect all OR children (flatten nested ORs)
-        children = _collect_chain(combinator, _Or, "left", "right")
-        child_explains = [_explain(c, depth + 1, verbose) for c in children]
-
-        if depth == 0:
-            header = "Check passes if ANY of:"
-        else:
-            header = f"{indent}{bullet}ANY of:"
-
-        return header + "\n" + "\n".join(child_explains)
-
-    if isinstance(combinator, _Not):
-        inner = _explain_inline(combinator.inner)
-        return f"{indent}{bullet}NOT: {inner}"
-
-    if isinstance(combinator, _Then):
-        left = _explain(combinator.left, depth + 1, verbose)
-        right = _explain(combinator.right, depth + 1, verbose)
-
-        if depth == 0:
-            header = "Execute in sequence:"
-        else:
-            header = f"{indent}{bullet}Execute in sequence:"
-
-        return f"{header}\n{left}\n{indent}  THEN:\n{right}"
-
-    if isinstance(combinator, Always):
-        return f"{indent}{bullet}Always pass"
-
-    if isinstance(combinator, Never):
-        return f"{indent}{bullet}Always fail"
-
-    if isinstance(combinator, Debug):
-        return f"{indent}{bullet}Debug: {combinator.label}"
-
-    if isinstance(combinator, Try):
-        return f"{indent}{bullet}Try: {combinator.name} (catch errors)"
-
-    # Fallback
-    return f"{indent}{bullet}{repr(combinator)}"
+    return "\n".join(line for _, line in output_lines)
 
 
-def _explain_inline(combinator: Combinator) -> str:
-    """Get a short inline explanation for NOT children."""
-    if isinstance(combinator, Predicate):
-        return combinator.name
-    if isinstance(combinator, Transform):
-        return combinator.name
-    if isinstance(combinator, _And):
-        children = _collect_chain(combinator, _And, "left", "right")
-        parts = [_explain_inline(c) for c in children]
-        return f"({' & '.join(parts)})"
-    if isinstance(combinator, _Or):
-        children = _collect_chain(combinator, _Or, "left", "right")
-        parts = [_explain_inline(c) for c in children]
-        return f"({' | '.join(parts)})"
-    if isinstance(combinator, _Not):
-        return f"~{_explain_inline(combinator.inner)}"
-    return repr(combinator)
+def _explain_inline_iterative(combinator: Combinator) -> str:
+    """Get a short inline explanation for NOT children (iteratively)."""
+    # For inline, we build a string representation
+    # Use a stack with instructions
+
+    result_parts: list[str] = []
+    # Stack: (combinator, instruction)
+    # instruction: 'process' or 'join_and' or 'join_or' or 'join_then'
+    stack: list[tuple[Any, str]] = [(combinator, "process")]
+
+    while stack:
+        item, instruction = stack.pop()
+
+        if instruction == "process":
+            comb = item
+
+            # Validating combinators
+            if isinstance(comb, ValidatingPredicate):
+                result_parts.append(comb.name)
+            elif isinstance(comb, _ValidatingAnd):
+                children = _collect_chain(comb, _ValidatingAnd, "left", "right")
+                stack.append((len(children), "join_and"))
+                for child in reversed(children):
+                    stack.append((child, "process"))
+            elif isinstance(comb, _ValidatingOr):
+                children = _collect_chain(comb, _ValidatingOr, "left", "right")
+                stack.append((len(children), "join_or"))
+                for child in reversed(children):
+                    stack.append((child, "process"))
+            elif isinstance(comb, _ValidatingNot):
+                stack.append((None, "prefix_not"))
+                stack.append((comb.inner, "process"))
+            # Cached predicate
+            elif isinstance(comb, CachedPredicate):
+                result_parts.append(comb.name)
+            # Base types
+            elif isinstance(comb, Predicate):
+                result_parts.append(comb.name)
+            elif isinstance(comb, Transform):
+                result_parts.append(comb.name)
+            elif isinstance(comb, _And):
+                children = _collect_chain(comb, _And, "left", "right")
+                stack.append((len(children), "join_and"))
+                for child in reversed(children):
+                    stack.append((child, "process"))
+            elif isinstance(comb, _Or):
+                children = _collect_chain(comb, _Or, "left", "right")
+                stack.append((len(children), "join_or"))
+                for child in reversed(children):
+                    stack.append((child, "process"))
+            elif isinstance(comb, _Not):
+                stack.append((None, "prefix_not"))
+                stack.append((comb.inner, "process"))
+            elif isinstance(comb, _Then):
+                children = _collect_chain(comb, _Then, "left", "right")
+                stack.append((len(children), "join_then"))
+                for child in reversed(children):
+                    stack.append((child, "process"))
+            # Retry
+            elif isinstance(comb, Retry):
+                stack.append((None, "wrap_retry"))
+                stack.append((comb.inner, "process"))
+            # Temporal
+            elif isinstance(comb, during_hours):
+                result_parts.append(f"during_hours({comb.start_hour}, {comb.end_hour})")
+            elif isinstance(comb, on_weekdays):
+                result_parts.append("on_weekdays()")
+            elif isinstance(comb, on_days):
+                result_parts.append(repr(comb))
+            elif isinstance(comb, after_date):
+                result_parts.append(repr(comb))
+            elif isinstance(comb, before_date):
+                result_parts.append(repr(comb))
+            elif isinstance(comb, between_dates):
+                result_parts.append(repr(comb))
+            else:
+                result_parts.append(repr(comb))
+
+        elif instruction == "join_and":
+            count = item
+            parts = [result_parts.pop() for _ in range(count)]
+            parts.reverse()
+            result_parts.append(f"({' & '.join(parts)})")
+
+        elif instruction == "join_or":
+            count = item
+            parts = [result_parts.pop() for _ in range(count)]
+            parts.reverse()
+            result_parts.append(f"({' | '.join(parts)})")
+
+        elif instruction == "join_then":
+            count = item
+            parts = [result_parts.pop() for _ in range(count)]
+            parts.reverse()
+            result_parts.append(f"({' >> '.join(parts)})")
+
+        elif instruction == "prefix_not":
+            inner = result_parts.pop()
+            result_parts.append(f"~{inner}")
+
+        elif instruction == "wrap_retry":
+            inner = result_parts.pop()
+            result_parts.append(f"Retry({inner})")
+
+    return result_parts[0] if result_parts else ""
 
 
 def _collect_chain(
     combinator: Combinator, cls: type, left_attr: str, right_attr: str
 ) -> list:
-    """Collect chained combinators of the same type."""
-    result = []
+    """Collect chained combinators of the same type (iteratively)."""
+    result: list[Combinator] = []
+    stack: list[Combinator] = [combinator]
 
-    def collect(c):
+    while stack:
+        c = stack.pop()
         if isinstance(c, cls):
-            collect(getattr(c, left_attr))
-            collect(getattr(c, right_attr))
+            # Push right first so left is processed first
+            stack.append(getattr(c, right_attr))
+            stack.append(getattr(c, left_attr))
         else:
             result.append(c)
 
-    collect(combinator)
     return result
 
 
@@ -1448,6 +1983,99 @@ class ValidatingPredicate(ValidatingCombinator[T]):
         return f"ValidatingPredicate({self.name})"
 
 
+def _is_validating_composite(combinator: Combinator) -> bool:
+    """Check if combinator is a validating composite type."""
+    return isinstance(combinator, (_ValidatingAnd, _ValidatingOr, _ValidatingNot))
+
+
+def _execute_validating_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]:
+    """
+    Execute a validating combinator tree iteratively using an explicit stack.
+    """
+    result_stack: list[tuple[bool, T]] = []
+    work_stack: list[tuple[Combinator[T], T, int, Any]] = [(root, ctx, 0, None)]
+
+    while work_stack:
+        combinator, current_ctx, phase, saved_data = work_stack.pop()
+
+        if isinstance(combinator, _ValidatingAnd):
+            if phase == 0:
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_validating_composite(combinator.left) or _is_composite(
+                    combinator.left
+                ):
+                    work_stack.append((combinator.left, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.left._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            elif phase == 1:
+                ok, new_ctx = result_stack.pop()
+                if not ok:
+                    result_stack.append((False, new_ctx))
+                else:
+                    work_stack.append((combinator, new_ctx, 2, None))
+                    if _is_validating_composite(combinator.right) or _is_composite(
+                        combinator.right
+                    ):
+                        work_stack.append((combinator.right, new_ctx, 0, None))
+                    else:
+                        ok2, new_ctx2 = combinator.right._execute(new_ctx)
+                        result_stack.append((ok2, new_ctx2))
+            else:
+                pass
+
+        elif isinstance(combinator, _ValidatingOr):
+            if phase == 0:
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_validating_composite(combinator.left) or _is_composite(
+                    combinator.left
+                ):
+                    work_stack.append((combinator.left, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.left._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            elif phase == 1:
+                ok, new_ctx = result_stack.pop()
+                if ok:
+                    result_stack.append((True, new_ctx))
+                else:
+                    work_stack.append((combinator, new_ctx, 2, None))
+                    if _is_validating_composite(combinator.right) or _is_composite(
+                        combinator.right
+                    ):
+                        work_stack.append((combinator.right, new_ctx, 0, None))
+                    else:
+                        ok2, new_ctx2 = combinator.right._execute(new_ctx)
+                        result_stack.append((ok2, new_ctx2))
+            else:
+                pass
+
+        elif isinstance(combinator, _ValidatingNot):
+            if phase == 0:
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_validating_composite(combinator.inner) or _is_composite(
+                    combinator.inner
+                ):
+                    work_stack.append((combinator.inner, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.inner._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            else:
+                ok, new_ctx = result_stack.pop()
+                result_stack.append((not ok, new_ctx))
+
+        # Handle standard composite combinators
+        elif _is_composite(combinator):
+            ok, new_ctx = _execute_iterative(combinator, current_ctx)
+            result_stack.append((ok, new_ctx))
+
+        else:
+            ok, new_ctx = combinator._execute(current_ctx)
+            result_stack.append((ok, new_ctx))
+
+    return result_stack[-1] if result_stack else (False, ctx)
+
+
 class _ValidatingAnd(ValidatingCombinator[T]):
     """AND combinator that collects all validation errors."""
 
@@ -1456,34 +2084,33 @@ class _ValidatingAnd(ValidatingCombinator[T]):
         self.right = right
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok1, ctx = self.left._execute(ctx)
-        if not ok1:
-            return False, ctx
-        return self.right._execute(ctx)
+        return _execute_validating_iterative(self, ctx)
 
     def validate(self, ctx: T) -> ValidationResult:
-        """Validate both sides and collect all errors."""
+        """Validate both sides and collect all errors (iteratively)."""
         errors: list[str] = []
 
-        # Validate left
-        if isinstance(self.left, ValidatingCombinator):
-            left_result = self.left.validate(ctx)
-            errors.extend(left_result.errors)
-            ctx = left_result.ctx
-        else:
-            ok, ctx = self.left._execute(ctx)
-            if not ok:
-                errors.append(f"Check failed: {_get_combinator_name(self.left)}")
+        # Flatten the AND chain iteratively
+        to_validate: list[Combinator[T]] = []
+        stack: list[Combinator[T]] = [self]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, _ValidatingAnd):
+                stack.append(current.right)
+                stack.append(current.left)
+            else:
+                to_validate.append(current)
 
-        # Validate right (even if left failed, to collect all errors)
-        if isinstance(self.right, ValidatingCombinator):
-            right_result = self.right.validate(ctx)
-            errors.extend(right_result.errors)
-            ctx = right_result.ctx
-        else:
-            ok, ctx = self.right._execute(ctx)
-            if not ok:
-                errors.append(f"Check failed: {_get_combinator_name(self.right)}")
+        # Validate each item
+        for item in to_validate:
+            if isinstance(item, ValidatingCombinator):
+                result = item.validate(ctx)
+                errors.extend(result.errors)
+                ctx = result.ctx
+            else:
+                ok, ctx = item._execute(ctx)
+                if not ok:
+                    errors.append(f"Check failed: {_get_combinator_name(item)}")
 
         return ValidationResult(ok=len(errors) == 0, errors=errors, ctx=ctx)
 
@@ -1496,35 +2123,42 @@ class _ValidatingOr(ValidatingCombinator[T]):
         self.right = right
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok1, result1 = self.left._execute(ctx)
-        if ok1:
-            return True, result1
-        return self.right._execute(ctx)
+        return _execute_validating_iterative(self, ctx)
 
     def validate(self, ctx: T) -> ValidationResult:
-        """Validate - passes if either side passes."""
-        # Try left first
-        if isinstance(self.left, ValidatingCombinator):
-            left_result = self.left.validate(ctx)
-            if left_result.ok:
-                return left_result
-        else:
-            ok, result = self.left._execute(ctx)
-            if ok:
-                return ValidationResult(ok=True, errors=[], ctx=result)
+        """Validate - passes if any in the chain passes (iteratively)."""
+        # Flatten the OR chain iteratively
+        to_validate: list[Combinator[T]] = []
+        stack: list[Combinator[T]] = [self]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, _ValidatingOr):
+                stack.append(current.right)
+                stack.append(current.left)
+            else:
+                to_validate.append(current)
 
-        # Left failed, try right
-        if isinstance(self.right, ValidatingCombinator):
-            return self.right.validate(ctx)
-        else:
-            ok, result = self.right._execute(ctx)
-            if ok:
-                return ValidationResult(ok=True, errors=[], ctx=result)
-            return ValidationResult(
-                ok=False,
-                errors=[f"Check failed: {_get_combinator_name(self.right)}"],
-                ctx=result,
-            )
+        # Try each item until one passes
+        last_result: ValidationResult | None = None
+        for item in to_validate:
+            if isinstance(item, ValidatingCombinator):
+                result = item.validate(ctx)
+                if result.ok:
+                    return result
+                last_result = result
+            else:
+                ok, result_ctx = item._execute(ctx)
+                if ok:
+                    return ValidationResult(ok=True, errors=[], ctx=result_ctx)
+                last_result = ValidationResult(
+                    ok=False,
+                    errors=[f"Check failed: {_get_combinator_name(item)}"],
+                    ctx=result_ctx,
+                )
+
+        return last_result or ValidationResult(
+            ok=False, errors=["No conditions to check"], ctx=ctx
+        )
 
 
 class _ValidatingNot(ValidatingCombinator[T]):
@@ -1535,27 +2169,22 @@ class _ValidatingNot(ValidatingCombinator[T]):
         self._error = error
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = self.inner._execute(ctx)
-        return not ok, ctx
+        return _execute_validating_iterative(self, ctx)
 
     def validate(self, ctx: T) -> ValidationResult:
         """Validate - inverts the inner result."""
         if isinstance(self.inner, ValidatingCombinator):
             inner_result = self.inner.validate(ctx)
-            # Invert: if inner passed, we fail; if inner failed, we pass
             if inner_result.ok:
-                # Inner passed, so NOT fails
                 error_msg = self._error or "NOT condition failed (inner passed)"
                 return ValidationResult(
                     ok=False, errors=[error_msg], ctx=inner_result.ctx
                 )
             else:
-                # Inner failed, so NOT passes
                 return ValidationResult(ok=True, errors=[], ctx=inner_result.ctx)
         else:
             ok, result = self.inner._execute(ctx)
             if ok:
-                # Inner passed, so NOT fails
                 error_msg = (
                     self._error or f"NOT {_get_combinator_name(self.inner)} failed"
                 )
@@ -1761,6 +2390,8 @@ def _get_async_combinator_name(combinator: AsyncCombinator) -> str:
         return "AsyncNOT"
     if isinstance(combinator, _AsyncThen):
         return "AsyncTHEN"
+    if isinstance(combinator, AsyncRetry):
+        return f"AsyncRetry({combinator.name})"
     return repr(combinator)
 
 
@@ -1771,76 +2402,228 @@ async def _async_traced_run(
     config: TraceConfig,
     depth: int = 0,
 ) -> tuple[bool, T]:
-    """Execute an async combinator with tracing."""
+    """Execute an async combinator with tracing (iteratively where possible)."""
+    return await _async_traced_run_iterative(combinator, ctx, hook, config, depth)
 
-    # Check depth limit
-    if config.max_depth is not None and depth > config.max_depth:
-        return await combinator._execute(ctx)
 
-    name = _get_async_combinator_name(combinator)
-    is_composite = isinstance(combinator, (_AsyncAnd, _AsyncOr, _AsyncNot, _AsyncThen))
+def _is_async_composite(combinator: AsyncCombinator) -> bool:
+    """Check if combinator is a composite type for async tracing."""
+    return isinstance(combinator, (_AsyncAnd, _AsyncOr, _AsyncNot, _AsyncThen))
 
-    # Skip composite combinators if leaf_only mode
-    if config.include_leaf_only and is_composite:
-        if config.nested:
-            return await _async_traced_run_inner(combinator, ctx, hook, config, depth)
-        return await combinator._execute(ctx)
 
-    # Call on_enter
-    span = hook.on_enter(name, ctx, depth)
-    start = time.perf_counter()
+async def _async_traced_run_iterative(
+    root: AsyncCombinator[T],
+    ctx: T,
+    hook: TraceHook,
+    config: TraceConfig,
+    initial_depth: int = 0,
+) -> tuple[bool, T]:
+    """Execute async combinator tree with tracing using explicit work list."""
 
-    try:
-        if config.nested and is_composite:
-            ok, result = await _async_traced_run_inner(
-                combinator, ctx, hook, config, depth
-            )
-        else:
-            ok, result = await combinator._execute(ctx)
+    # For async, we use a work list approach but still need to await
+    # We process the tree by flattening chains where possible
 
+    async def process_node(
+        combinator: AsyncCombinator[T],
+        current_ctx: T,
+        depth: int,
+    ) -> tuple[bool, T]:
+        """Process a single node with tracing."""
+
+        # Check depth limit
+        if config.max_depth is not None and depth > config.max_depth:
+            return await combinator._execute(current_ctx)
+
+        name = _get_async_combinator_name(combinator)
+        is_composite = _is_async_composite(combinator)
+
+        # Skip composite combinators if leaf_only mode
+        if config.include_leaf_only and is_composite:
+            if config.nested:
+                return await process_composite_no_span(combinator, current_ctx, depth)
+            return await combinator._execute(current_ctx)
+
+        # Call on_enter
+        span = hook.on_enter(name, current_ctx, depth)
+        start = time.perf_counter()
+
+        try:
+            if config.nested and is_composite:
+                ok, result = await process_composite(
+                    combinator, current_ctx, depth, span, name, start
+                )
+            else:
+                ok, result = await combinator._execute(current_ctx)
+                duration_ms = (time.perf_counter() - start) * 1000
+                hook.on_exit(span, name, ok, duration_ms, depth)
+
+            return ok, result
+
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start) * 1000
+            hook.on_error(span, name, e, duration_ms, depth)
+            raise
+
+    async def process_composite(
+        combinator: AsyncCombinator[T],
+        current_ctx: T,
+        depth: int,
+        span: Any,
+        name: str,
+        start: float,
+    ) -> tuple[bool, T]:
+        """Process composite combinator with proper span handling."""
+
+        if isinstance(combinator, _AsyncAnd):
+            # Flatten AND chain
+            children = _flatten_async_and(combinator)
+            ctx = current_ctx
+            for child in children:
+                ok, ctx = await process_node(child, ctx, depth + 1)
+                if not ok:
+                    duration_ms = (time.perf_counter() - start) * 1000
+                    hook.on_exit(span, name, False, duration_ms, depth)
+                    return False, ctx
+            duration_ms = (time.perf_counter() - start) * 1000
+            hook.on_exit(span, name, True, duration_ms, depth)
+            return True, ctx
+
+        elif isinstance(combinator, _AsyncOr):
+            # Flatten OR chain
+            children = _flatten_async_or(combinator)
+            ctx = current_ctx
+            for child in children:
+                ok, ctx = await process_node(child, ctx, depth + 1)
+                if ok:
+                    duration_ms = (time.perf_counter() - start) * 1000
+                    hook.on_exit(span, name, True, duration_ms, depth)
+                    return True, ctx
+            duration_ms = (time.perf_counter() - start) * 1000
+            hook.on_exit(span, name, False, duration_ms, depth)
+            return False, ctx
+
+        elif isinstance(combinator, _AsyncNot):
+            # Handle chained NOTs iteratively
+            current: AsyncCombinator[T] = combinator
+            invert_count = 0
+            while isinstance(current, _AsyncNot):
+                invert_count += 1
+                current = current.inner
+
+            ok, result = await process_node(current, current_ctx, depth + 1)
+            if invert_count % 2 == 1:
+                ok = not ok
+
+            duration_ms = (time.perf_counter() - start) * 1000
+            hook.on_exit(span, name, ok, duration_ms, depth)
+            return ok, result
+
+        elif isinstance(combinator, _AsyncThen):
+            # Flatten THEN chain
+            children = _flatten_async_then(combinator)
+            ctx = current_ctx
+            for child in children[:-1]:
+                _, ctx = await process_node(child, ctx, depth + 1)
+            ok, ctx = await process_node(children[-1], ctx, depth + 1)
+            duration_ms = (time.perf_counter() - start) * 1000
+            hook.on_exit(span, name, ok, duration_ms, depth)
+            return ok, ctx
+
+        # Fallback
+        ok, result = await combinator._execute(current_ctx)
         duration_ms = (time.perf_counter() - start) * 1000
         hook.on_exit(span, name, ok, duration_ms, depth)
         return ok, result
 
-    except Exception as e:
-        duration_ms = (time.perf_counter() - start) * 1000
-        hook.on_error(span, name, e, duration_ms, depth)
-        raise
+    async def process_composite_no_span(
+        combinator: AsyncCombinator[T],
+        current_ctx: T,
+        depth: int,
+    ) -> tuple[bool, T]:
+        """Process composite without creating span (leaf_only mode)."""
 
-
-async def _async_traced_run_inner(
-    combinator: AsyncCombinator[T],
-    ctx: T,
-    hook: TraceHook,
-    config: TraceConfig,
-    depth: int,
-) -> tuple[bool, T]:
-    """Handle tracing for composite async combinators."""
-
-    if isinstance(combinator, _AsyncAnd):
-        ok, ctx = await _async_traced_run(combinator.left, ctx, hook, config, depth + 1)
-        if not ok:
-            return False, ctx
-        return await _async_traced_run(combinator.right, ctx, hook, config, depth + 1)
-
-    if isinstance(combinator, _AsyncOr):
-        ok, ctx = await _async_traced_run(combinator.left, ctx, hook, config, depth + 1)
-        if ok:
+        if isinstance(combinator, _AsyncAnd):
+            children = _flatten_async_and(combinator)
+            ctx = current_ctx
+            for child in children:
+                ok, ctx = await process_node(child, ctx, depth + 1)
+                if not ok:
+                    return False, ctx
             return True, ctx
-        return await _async_traced_run(combinator.right, ctx, hook, config, depth + 1)
 
-    if isinstance(combinator, _AsyncNot):
-        ok, result = await _async_traced_run(
-            combinator.inner, ctx, hook, config, depth + 1
-        )
-        return not ok, result
+        elif isinstance(combinator, _AsyncOr):
+            children = _flatten_async_or(combinator)
+            ctx = current_ctx
+            for child in children:
+                ok, ctx = await process_node(child, ctx, depth + 1)
+                if ok:
+                    return True, ctx
+            return False, ctx
 
-    if isinstance(combinator, _AsyncThen):
-        _, ctx = await _async_traced_run(combinator.left, ctx, hook, config, depth + 1)
-        return await _async_traced_run(combinator.right, ctx, hook, config, depth + 1)
+        elif isinstance(combinator, _AsyncNot):
+            current: AsyncCombinator[T] = combinator
+            invert_count = 0
+            while isinstance(current, _AsyncNot):
+                invert_count += 1
+                current = current.inner
 
-    # Fallback
-    return await combinator._execute(ctx)
+            ok, result = await process_node(current, current_ctx, depth + 1)
+            if invert_count % 2 == 1:
+                ok = not ok
+            return ok, result
+
+        elif isinstance(combinator, _AsyncThen):
+            children = _flatten_async_then(combinator)
+            ctx = current_ctx
+            for child in children[:-1]:
+                _, ctx = await process_node(child, ctx, depth + 1)
+            return await process_node(children[-1], ctx, depth + 1)
+
+        return await combinator._execute(current_ctx)
+
+    return await process_node(root, ctx, initial_depth)
+
+
+def _flatten_async_and(combinator: AsyncCombinator[T]) -> list[AsyncCombinator[T]]:
+    """Flatten nested _AsyncAnd into a list (iterative to avoid recursion)."""
+    result: list[AsyncCombinator[T]] = []
+    stack: list[AsyncCombinator[T]] = [combinator]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, _AsyncAnd):
+            stack.append(current.right)
+            stack.append(current.left)
+        else:
+            result.append(current)
+    return result
+
+
+def _flatten_async_or(combinator: AsyncCombinator[T]) -> list[AsyncCombinator[T]]:
+    """Flatten nested _AsyncOr into a list (iterative to avoid recursion)."""
+    result: list[AsyncCombinator[T]] = []
+    stack: list[AsyncCombinator[T]] = [combinator]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, _AsyncOr):
+            stack.append(current.right)
+            stack.append(current.left)
+        else:
+            result.append(current)
+    return result
+
+
+def _flatten_async_then(combinator: AsyncCombinator[T]) -> list[AsyncCombinator[T]]:
+    """Flatten nested _AsyncThen into a list (iterative to avoid recursion)."""
+    result: list[AsyncCombinator[T]] = []
+    stack: list[AsyncCombinator[T]] = [combinator]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, _AsyncThen):
+            stack.append(current.right)
+            stack.append(current.left)
+        else:
+            result.append(current)
+    return result
 
 
 @dataclass
@@ -1849,10 +2632,12 @@ class _AsyncAnd(AsyncCombinator[T]):
     right: AsyncCombinator[T]
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = await self.left._execute(ctx)
-        if not ok:
-            return False, ctx
-        return await self.right._execute(ctx)
+        # Flatten chain and iterate to avoid deep recursion
+        for combinator in _flatten_async_and(self):
+            ok, ctx = await combinator._execute(ctx)
+            if not ok:
+                return False, ctx
+        return True, ctx
 
 
 @dataclass
@@ -1861,10 +2646,12 @@ class _AsyncOr(AsyncCombinator[T]):
     right: AsyncCombinator[T]
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = await self.left._execute(ctx)
-        if ok:
-            return True, ctx
-        return await self.right._execute(ctx)
+        # Flatten chain and iterate to avoid deep recursion
+        for combinator in _flatten_async_or(self):
+            ok, ctx = await combinator._execute(ctx)
+            if ok:
+                return True, ctx
+        return False, ctx
 
 
 @dataclass
@@ -1872,8 +2659,17 @@ class _AsyncNot(AsyncCombinator[T]):
     inner: AsyncCombinator[T]
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
-        ok, ctx = await self.inner._execute(ctx)
-        return not ok, ctx
+        # Handle chained NOT (e.g., ~~~a) iteratively
+        current: AsyncCombinator[T] = self
+        invert_count = 0
+        while isinstance(current, _AsyncNot):
+            invert_count += 1
+            current = current.inner
+        ok, ctx = await current._execute(ctx)
+        # Odd number of inversions flips the result
+        if invert_count % 2 == 1:
+            ok = not ok
+        return ok, ctx
 
 
 @dataclass
@@ -1882,8 +2678,12 @@ class _AsyncThen(AsyncCombinator[T]):
     right: AsyncCombinator[T]
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
-        _, ctx = await self.left._execute(ctx)
-        return await self.right._execute(ctx)
+        # Flatten chain and iterate to avoid deep recursion
+        combinators = _flatten_async_then(self)
+        for combinator in combinators[:-1]:
+            _, ctx = await combinator._execute(ctx)
+        # Return the result of the last combinator
+        return await combinators[-1]._execute(ctx)
 
 
 class AsyncPredicate(AsyncCombinator[T]):
