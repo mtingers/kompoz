@@ -15,6 +15,7 @@
   - [Expression DSL](#expression-dsl)
     - [Basic Syntax](#basic-syntax)
     - [Expression Operators](#expression-operators)
+    - [Modifiers](#modifiers)
     - [Examples](#examples)
     - [Multi-line Expressions](#multi-line-expressions)
     - [Operator Precedence](#operator-precedence)
@@ -55,7 +56,7 @@
   - [Examples](#examples-1)
   - [Contributing](#contributing)
   - [License](#license)
-    <!--toc:end-->
+      <!--toc:end-->
 
 **Composable Predicate & Transform Combinators for Python**
 
@@ -298,26 +299,27 @@ loaded = reg.load("is_admin AND is_active")  # same thing
 
 Both symbol and word syntax are supported:
 
-| Symbol | Word   | Meaning                            |
-| ------ | ------ | ---------------------------------- |
-| `&`    | `AND`  | All conditions must pass           |
-| `\|`   | `OR`   | Any condition must pass            |
-| `~`    | `NOT`  | Invert the condition               |
-| `!`    | `NOT`  | Invert (alias)                     |
-| `>>`   | `THEN` | Always run both, keep second result|
-| `()`   |        | Grouping                           |
+| Symbol | Word   | Meaning                             |
+| ------ | ------ | ----------------------------------- |
+| `&`    | `AND`  | All conditions must pass            |
+| `\|`   | `OR`   | Any condition must pass             |
+| `~`    | `NOT`  | Invert the condition                |
+| `!`    | `NOT`  | Invert (alias)                      |
+| `>>`   | `THEN` | Always run both, keep second result |
+| `()`   |        | Grouping                            |
+
 
 ### Modifiers
 
 Postfix modifiers add retry and caching behavior:
 
-| Modifier                  | Meaning                              |
-| ------------------------- | ------------------------------------ |
-| `:retry(n)`               | Retry up to n times on failure       |
-| `:retry(n, backoff)`      | Retry with backoff delay (seconds)   |
-| `:retry(n, b, true)`      | Exponential backoff                  |
-| `:retry(n, b, true, j)`   | With jitter                          |
-| `:cached`                 | Cache result within `use_cache()` scope |
+| Modifier                | Meaning                                 |
+| ----------------------- | --------------------------------------- |
+| `:retry(n)`             | Retry up to n times on failure          |
+| `:retry(n, backoff)`    | Retry with backoff delay (seconds)      |
+| `:retry(n, b, true)`    | Exponential backoff                     |
+| `:retry(n, b, true, j)` | With jitter                             |
+| `:cached`               | Cache result within `use_cache()` scope |
 
 Modifiers can be chained: `rule:cached:retry(3)`
 
@@ -341,10 +343,6 @@ loaded = reg.load("~is_banned")
 loaded = reg.load("NOT is_banned")
 loaded = reg.load("!is_banned")
 
-# THEN - always run both
-loaded = reg.load("validate >> process")
-loaded = reg.load("validate THEN process")
-
 # Parameterized rules
 loaded = reg.load("account_older_than(30)")
 loaded = reg.load("credit_above(700)")
@@ -352,10 +350,30 @@ loaded = reg.load("credit_above(700)")
 # Grouping with parentheses
 loaded = reg.load("is_admin | (is_active & ~is_banned)")
 
+# Modifiers - retry on failure
+loaded = reg.load("fetch_user:retry(3)")              # Retry up to 3 times
+loaded = reg.load("fetch_user:retry(3, 1.0)")         # With 1s backoff
+loaded = reg.load("fetch_user:retry(3, 1.0, true)")   # Exponential backoff
+
+# Modifiers - caching
+loaded = reg.load("expensive_check:cached")           # Cache results
+
+# Modifiers on grouped expressions
+loaded = reg.load("(fetch_primary | fetch_fallback):retry(5)")
+
+# Chain modifiers
+loaded = reg.load("slow_query:cached:retry(3)")
+
 # Complex expressions
 loaded = reg.load("""
     is_admin
     | (is_active & ~is_banned & account_older_than(30))
+""")
+
+# Complex with modifiers
+loaded = reg.load("""
+    is_admin
+    | (is_active & ~is_banned & fetch_permissions:retry(3, 1.0))
 """)
 ```
 
@@ -383,10 +401,10 @@ loaded = reg.load("""
 
 From lowest to highest:
 
-1. `OR` / `|` (evaluated last)
-2. `THEN` / `>>` (sequence operator)
-3. `AND` / `&`
-4. `NOT` / `~` / `!` (evaluated first)
+1. `OR` / `|`
+2. `AND` / `&`
+3. `NOT` / `~` / `!`
+4. `:modifier` (evaluated first, binds tightest)
 
 ```python
 # This expression:
@@ -397,6 +415,15 @@ is_admin | (is_active & (~is_banned))
 
 # Use parentheses to override:
 (is_admin | is_active) & ~is_banned
+
+# Conditionals have lowest precedence:
+a | b ? c : d  # Parsed as: (a | b) ? c : d
+
+# Modifiers bind to their immediate left:
+a & b:retry(3)  # Only b gets retry, not (a & b)
+
+# Use grouping to apply modifier to compound expression:
+(a & b):retry(3)  # Both a and b are retried together
 ```
 
 ### Load from File
@@ -412,6 +439,19 @@ is_admin | (is_active & ~is_banned & account_older_than(30))
 
 ```python
 loaded = reg.load_file("access_control.kpz")
+```
+
+With modifiers:
+
+```
+# resilient_access.kpz
+# Retry flaky permission checks
+
+is_admin
+| (is_active
+   & ~is_banned
+   & fetch_permissions:retry(3, 1.0)
+   & account_older_than(30))
 ```
 
 ## Type Hints
@@ -553,11 +593,25 @@ valid_form = valid_email & valid_password & accepted_terms
 ### Data Pipeline with Fallbacks
 
 ```python
+# Using Python API
 fetch_data = (
     (try_primary_db | try_replica_db | try_cache)
     & validate_schema
     & transform_response
 )
+
+# With explicit retry
+from kompoz import Retry
+
+resilient_fetch = Retry(
+    try_primary_db | try_replica_db,
+    max_attempts=3,
+    backoff=1.0,
+    exponential=True
+)
+
+# Using DSL with :retry modifier
+reg.load("(try_primary | try_replica):retry(3, 1.0, true) & validate")
 ```
 
 ### Feature Flags
@@ -976,9 +1030,9 @@ rule_docs = {
 
 - **`parse_expression(text)`**: Parse expression string into config dict
 - **`explain(combinator)`**: Generate plain English explanation of a rule
-- **`use_tracing(hook, config)`**: Context manager to enable tracing (sync and async)
-- **`run_traced(combinator, ctx, hook, config)`**: Run sync combinator with explicit tracing
-- **`run_async_traced(combinator, ctx, hook, config)`**: Run async combinator with explicit tracing
+- **`if_then_else(cond, then_branch, else_branch)`**: Create conditional combinator
+- **`use_tracing(hook, config)`**: Context manager to enable tracing
+- **`run_traced(combinator, ctx, hook, config)`**: Run with explicit tracing
 - **`use_cache()`**: Context manager to enable caching
 
 ### Tracing Classes

@@ -49,6 +49,7 @@ __all__ = [
     "Never",
     "Debug",
     "Registry",
+    "if_then_else",
     # Expression parsing
     "parse_expression",
     "ExpressionParser",
@@ -174,6 +175,10 @@ class Combinator(ABC, Generic[T]):
         ~  = not (inverts success/failure)
         >> = then (always runs both)
 
+    Conditional branching:
+        condition.if_else(then_branch, else_branch)
+        if_then_else(condition, then_branch, else_branch)
+
     Tracing:
         Use `with use_tracing(hook):` to trace all run() calls within scope.
         Or use `run_traced(combinator, ctx, hook)` for explicit tracing.
@@ -215,6 +220,22 @@ class Combinator(ABC, Generic[T]):
         """a >> b = run b regardless of a's result (keep b's result)."""
         return _Then(self, other)
 
+    def if_else(
+        self, then_branch: Combinator[T], else_branch: Combinator[T]
+    ) -> Combinator[T]:
+        """
+        Create a conditional: if self succeeds, run then_branch; else run else_branch.
+
+        Example:
+            is_premium.if_else(apply_discount, charge_full_price)
+
+        This is equivalent to:
+            IF is_premium THEN apply_discount ELSE charge_full_price
+
+        Unlike OR (|), this always executes exactly one branch based on the condition.
+        """
+        return _IfThenElse(self, then_branch, else_branch)
+
     def __call__(self, ctx: T) -> tuple[bool, T]:
         """Shorthand for run()."""
         return self.run(ctx)
@@ -222,7 +243,7 @@ class Combinator(ABC, Generic[T]):
 
 def _is_composite(combinator: Combinator) -> bool:
     """Check if combinator is a composite type that needs stack-based execution."""
-    return isinstance(combinator, (_And, _Or, _Not, _Then))
+    return isinstance(combinator, (_And, _Or, _Not, _Then, _IfThenElse))
 
 
 def _execute_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]:
@@ -329,6 +350,38 @@ def _execute_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]:
             else:
                 pass
 
+        # Handle _IfThenElse
+        elif isinstance(combinator, _IfThenElse):
+            if phase == 0:
+                # First, evaluate the condition
+                work_stack.append((combinator, current_ctx, 1, None))
+                if _is_composite(combinator.condition):
+                    work_stack.append((combinator.condition, current_ctx, 0, None))
+                else:
+                    ok, new_ctx = combinator.condition._execute(current_ctx)
+                    result_stack.append((ok, new_ctx))
+            elif phase == 1:
+                # Condition evaluated, choose branch
+                cond_ok, new_ctx = result_stack.pop()
+                work_stack.append((combinator, new_ctx, 2, None))
+                if cond_ok:
+                    # Execute then_branch
+                    if _is_composite(combinator.then_branch):
+                        work_stack.append((combinator.then_branch, new_ctx, 0, None))
+                    else:
+                        ok2, new_ctx2 = combinator.then_branch._execute(new_ctx)
+                        result_stack.append((ok2, new_ctx2))
+                else:
+                    # Execute else_branch
+                    if _is_composite(combinator.else_branch):
+                        work_stack.append((combinator.else_branch, new_ctx, 0, None))
+                    else:
+                        ok2, new_ctx2 = combinator.else_branch._execute(new_ctx)
+                        result_stack.append((ok2, new_ctx2))
+            else:  # phase == 2
+                # Branch result is on stack
+                pass
+
         # Handle leaf combinators (shouldn't normally get here from root)
         else:
             ok, new_ctx = combinator._execute(current_ctx)
@@ -370,6 +423,60 @@ class _Then(Combinator[T]):
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
         return _execute_iterative(self, ctx)
+
+
+@dataclass
+class _IfThenElse(Combinator[T]):
+    """
+    Conditional combinator: if condition succeeds, run then_branch; else run else_branch.
+
+    Unlike OR which short-circuits on success, this explicitly branches:
+    - condition ? then_branch : else_branch
+    - IF condition THEN then_branch ELSE else_branch
+    """
+
+    condition: Combinator[T]
+    then_branch: Combinator[T]
+    else_branch: Combinator[T]
+
+    def _execute(self, ctx: T) -> tuple[bool, T]:
+        return _execute_iterative(self, ctx)
+
+
+def if_then_else(
+    condition: Combinator[T], then_branch: Combinator[T], else_branch: Combinator[T]
+) -> Combinator[T]:
+    """
+    Create a conditional combinator: if condition succeeds, run then_branch; else run else_branch.
+
+    Example:
+        from kompoz import if_then_else, rule
+
+        @rule
+        def is_premium(user):
+            return user.is_premium
+
+        @rule
+        def apply_discount(user):
+            user.discount = 0.2
+            return True
+
+        @rule
+        def charge_full_price(user):
+            user.discount = 0
+            return True
+
+        pricing = if_then_else(is_premium, apply_discount, charge_full_price)
+        ok, user = pricing.run(user)
+
+    DSL equivalent:
+        IF is_premium THEN apply_discount ELSE charge_full_price
+        is_premium ? apply_discount : charge_full_price
+
+    Unlike OR (|) which is a fallback (try a, if fail try b), if_then_else
+    explicitly branches based on the condition result.
+    """
+    return _IfThenElse(condition, then_branch, else_branch)
 
 
 # =============================================================================
@@ -789,6 +896,8 @@ def _get_combinator_name(combinator: Combinator) -> str:
         return "NOT"
     if isinstance(combinator, _Then):
         return "THEN"
+    if isinstance(combinator, _IfThenElse):
+        return "IF_THEN_ELSE"
     # Utility combinators
     if isinstance(combinator, Always):
         return "Always"
@@ -1062,6 +1171,20 @@ def _traced_composite_no_span(
                 child, current_ctx, hook, config, depth + 1
             )
         return _traced_run_impl(children[-1], current_ctx, hook, config, depth + 1)
+
+    # Handle IF/THEN/ELSE
+    if isinstance(combinator, _IfThenElse):
+        cond_ok, new_ctx = _traced_run_impl(
+            combinator.condition, ctx, hook, config, depth + 1
+        )
+        if cond_ok:
+            return _traced_run_impl(
+                combinator.then_branch, new_ctx, hook, config, depth + 1
+            )
+        else:
+            return _traced_run_impl(
+                combinator.else_branch, new_ctx, hook, config, depth + 1
+            )
 
     # Fallback
     return combinator._execute(ctx)
@@ -1489,6 +1612,22 @@ def _explain_iterative(combinator: Combinator, verbose: bool) -> str:
             for child in reversed(children):
                 stack.append((child, depth + 1))
 
+        elif isinstance(comb, _IfThenElse):
+            cond_str = _explain_inline_iterative(comb.condition)
+            then_str = _explain_inline_iterative(comb.then_branch)
+            else_str = _explain_inline_iterative(comb.else_branch)
+            if depth == 0:
+                output_lines.append((depth, f"IF {cond_str}"))
+                output_lines.append((depth, f"THEN {then_str}"))
+                output_lines.append((depth, f"ELSE {else_str}"))
+            else:
+                output_lines.append(
+                    (
+                        depth,
+                        f"{indent}{bullet}IF {cond_str} THEN {then_str} ELSE {else_str}",
+                    )
+                )
+
         # Utility combinators
         elif isinstance(comb, Always):
             output_lines.append((depth, f"{indent}{bullet}Always pass"))
@@ -1613,6 +1752,11 @@ def _explain_inline_iterative(combinator: Combinator) -> str:
                 stack.append((len(children), "join_then"))
                 for child in reversed(children):
                     stack.append((child, "process"))
+            elif isinstance(comb, _IfThenElse):
+                stack.append((None, "join_if"))
+                stack.append((comb.else_branch, "process"))
+                stack.append((comb.then_branch, "process"))
+                stack.append((comb.condition, "process"))
             # Retry
             elif isinstance(comb, Retry):
                 stack.append((None, "wrap_retry"))
@@ -1658,6 +1802,12 @@ def _explain_inline_iterative(combinator: Combinator) -> str:
         elif instruction == "wrap_retry":
             inner = result_parts.pop()
             result_parts.append(f"Retry({inner})")
+
+        elif instruction == "join_if":
+            cond = result_parts.pop()
+            then_part = result_parts.pop()
+            else_part = result_parts.pop()
+            result_parts.append(f"({cond} ? {then_part} : {else_part})")
 
     return result_parts[0] if result_parts else ""
 
@@ -3226,7 +3376,9 @@ class ExpressionParser:
         Word style:    is_admin AND NOT is_banned AND account_older_than(30)
 
     Operators (by precedence, lowest to highest):
-        |, OR       - Any must pass (lowest precedence)
+        IF/THEN/ELSE, ? : - Conditional branching (lowest precedence)
+        |, OR       - Any must pass
+        >>, THEN    - Sequence (run both)
         &, AND      - All must pass
         ~, NOT, !   - Invert result
         :modifier   - Apply modifier (highest precedence)
@@ -3238,6 +3390,10 @@ class ExpressionParser:
         rule_name                   - Simple rule
         rule_name(arg)              - Rule with one argument
         rule_name(arg1, arg2)       - Rule with multiple arguments
+
+    Conditional (if/else):
+        IF condition THEN action ELSE alternative
+        condition ? action : alternative
 
     Modifiers (postfix syntax):
         rule:retry(n)               - Retry up to n times
@@ -3260,6 +3416,10 @@ class ExpressionParser:
         is_admin & (is_active | is_premium)
         account_older_than(30) & credit_above(700)
 
+        # Conditional
+        IF is_premium THEN apply_discount ELSE charge_full
+        is_premium ? apply_discount : charge_full
+
         # Modifiers
         fetch_data:retry(3)
         fetch_data:retry(5, 1.0, true)
@@ -3276,11 +3436,14 @@ class ExpressionParser:
     AND = "AND"
     OR = "OR"
     NOT = "NOT"
-    THEN = "THEN"
+    THEN = "THEN"  # >> operator and THEN keyword
+    IF = "IF"
+    ELSE = "ELSE"
+    QUESTION = "QUESTION"  # ?
     LPAREN = "LPAREN"
     RPAREN = "RPAREN"
     COMMA = "COMMA"
-    COLON = "COLON"  # For modifier syntax (:retry, :cached)
+    COLON = "COLON"  # For modifier syntax (:retry, :cached) and ternary
     IDENT = "IDENT"
     NUMBER = "NUMBER"
     STRING = "STRING"
@@ -3330,6 +3493,9 @@ class ExpressionParser:
             elif ch in "~!":
                 self.tokens.append((self.NOT, ch))
                 self.pos += 1
+            elif ch == "?":
+                self.tokens.append((self.QUESTION, "?"))
+                self.pos += 1
             elif ch == "(":
                 self.tokens.append((self.LPAREN, "("))
                 self.pos += 1
@@ -3366,8 +3532,13 @@ class ExpressionParser:
                     self.tokens.append((self.OR, ident))
                 elif upper == "NOT":
                     self.tokens.append((self.NOT, ident))
+                elif upper == "IF":
+                    self.tokens.append((self.IF, ident))
                 elif upper == "THEN":
+                    # Same token as >> operator - context determines meaning
                     self.tokens.append((self.THEN, ident))
+                elif upper == "ELSE":
+                    self.tokens.append((self.ELSE, ident))
                 elif lower in ("true", "false"):
                     self.tokens.append((self.BOOL, lower == "true"))
                 else:
@@ -3444,7 +3615,9 @@ class ExpressionParser:
         Parse expression and return config dict.
 
         Grammar:
-            expr      = or_expr
+            expr      = if_expr
+            if_expr   = 'IF' or_expr 'THEN' or_expr 'ELSE' or_expr
+                      | or_expr ('?' or_expr ':' or_expr)?
             or_expr   = then_expr (('|' | 'OR') then_expr)*
             then_expr = and_expr (('>>' | 'THEN') and_expr)*
             and_expr  = not_expr (('&' | 'AND') not_expr)*
@@ -3455,17 +3628,60 @@ class ExpressionParser:
             arg_list  = arg (',' arg)*
             arg       = NUMBER | STRING | IDENT | BOOL
 
+        Conditionals:
+            IF condition THEN then_branch ELSE else_branch
+            condition ? then_branch : else_branch
+
         Modifiers:
             :retry(max_attempts, [backoff], [exponential], [jitter])
             :cached
         """
-        result = self._parse_or()
+        result = self._parse_if()
         if self._peek()[0] != self.EOF:
             raise ValueError(f"Unexpected token: {self._peek()}")
         return result
 
+    def _parse_if(self) -> dict | str:
+        """Parse IF/THEN/ELSE or ternary expression (lowest precedence)."""
+        # Check for keyword IF
+        if self._peek()[0] == self.IF:
+            self._consume()  # consume IF
+            # Parse condition allowing OR but not THEN sequences
+            # This means IF a >> b THEN c ELSE d needs parentheses: IF (a >> b) THEN c ELSE d
+            condition = self._parse_or_no_then()
+            self._expect(self.THEN)  # expect THEN keyword
+            then_branch = self._parse_if()  # Allow nested if/ternary in branches
+            self._expect(self.ELSE)  # expect ELSE
+            else_branch = self._parse_if()  # Allow nested if/ternary in branches
+            return {"if": {"cond": condition, "then": then_branch, "else": else_branch}}
+
+        # Otherwise parse or_expr and check for ternary ?:
+        condition = self._parse_or()
+
+        if self._peek()[0] == self.QUESTION:
+            self._consume()  # consume ?
+            then_branch = self._parse_if()  # Allow nested if/ternary
+            self._expect(self.COLON)  # expect :
+            else_branch = self._parse_if()  # Allow nested if/ternary
+            return {"if": {"cond": condition, "then": then_branch, "else": else_branch}}
+
+        return condition
+
+    def _parse_or_no_then(self) -> dict | str:
+        """Parse OR expression without THEN sequences (for IF conditions)."""
+        left = self._parse_and()
+
+        items = [left]
+        while self._peek()[0] == self.OR:
+            self._consume()
+            items.append(self._parse_and())
+
+        if len(items) == 1:
+            return items[0]
+        return {"or": items}
+
     def _parse_or(self) -> dict | str:
-        """Parse OR expression (lowest precedence)."""
+        """Parse OR expression."""
         left = self._parse_then()
 
         items = [left]
@@ -3517,19 +3733,40 @@ class ExpressionParser:
 
         # Check for chained modifiers like :retry(3):cached
         while self._peek()[0] == self.COLON:
+            # Peek ahead - if this is part of ternary ?: we should stop
+            # Save position in case we need to backtrack
+            saved_pos = self.token_pos
             self._consume()  # consume ':'
 
-            # Expect modifier name
+            # Check if this looks like a modifier (IDENT)
             if self._peek()[0] != self.IDENT:
-                raise ValueError(
-                    f"Expected modifier name after ':', got {self._peek()}"
-                )
+                # Not a modifier, backtrack (this is probably ternary :)
+                self.token_pos = saved_pos
+                break
 
-            modifier = self._consume()[1].lower()
+            modifier_name = self._peek()[1]
+            modifier = modifier_name.lower()
+
+            # Peek at what comes after the identifier
+            next_pos = self.token_pos + 1
+            next_token = (
+                self.tokens[next_pos][0] if next_pos < len(self.tokens) else self.EOF
+            )
+
             if modifier not in self.MODIFIERS:
-                raise ValueError(
-                    f"Unknown modifier '{modifier}'. Valid modifiers: {self.MODIFIERS}"
-                )
+                # Only raise error if it looks like a modifier call (has parens)
+                # This allows ternary `a ? b : c` to work (c is not followed by parens)
+                if next_token == self.LPAREN:
+                    raise ValueError(
+                        f"Unknown modifier '{modifier_name}'. Valid modifiers: {', '.join(sorted(self.MODIFIERS))}"
+                    )
+                else:
+                    # Could be ternary colon, backtrack
+                    self.token_pos = saved_pos
+                    break
+
+            # It's a modifier, consume and process
+            self._consume()  # consume modifier name
 
             # Check for optional arguments
             args: list[Any] = []
@@ -3552,7 +3789,7 @@ class ExpressionParser:
 
         if token[0] == self.LPAREN:
             self._consume()
-            expr = self._parse_or()
+            expr = self._parse_if()  # Allow full expressions including if/then/else
             self._expect(self.RPAREN)
             return expr
 
@@ -3740,6 +3977,10 @@ class Registry(Generic[T]):
             credit_above(700)
             in_role("admin", "moderator")
 
+            # Conditional (if/then/else)
+            IF is_premium THEN apply_discount ELSE charge_full
+            is_premium ? apply_discount : charge_full
+
             # Modifiers (postfix syntax)
             fetch_data:retry(3)                   # Retry up to 3 times
             fetch_data:retry(3, 1.0)              # With 1s backoff
@@ -3803,6 +4044,13 @@ class Registry(Generic[T]):
             elif key == "then":
                 items = [self._build(item) for item in value]
                 return self._combine_seq(items)
+
+            elif key == "if":
+                # If/then/else conditional
+                condition = self._build(value["cond"])
+                then_branch = self._build(value["then"])
+                else_branch = self._build(value["else"])
+                return _IfThenElse(condition, then_branch, else_branch)
 
             # Modifier: retry
             elif key == "retry":
