@@ -1,0 +1,8 @@
+# pricing.kpz - Dynamic Pricing Rules
+# Demonstrates IF/THEN/ELSE conditional branching
+#
+# Unlike OR (|) which is a fallback, IF/THEN/ELSE explicitly
+# branches: exactly one path executes based on the condition.
+
+# Premium users get a discount, everyone else pays full price
+IF is_premium THEN apply_discount ELSE charge_full_price

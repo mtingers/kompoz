@@ -26,16 +26,18 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+opentelemetry = [
     "opentelemetry-api>=1.39.1",
     "opentelemetry-exporter-otlp>=1.39.1",
     "opentelemetry-sdk>=1.39.1",
 ]
-
-[project.optional-dependencies]
 dev = ["pytest-cov>=7.0.0"]
 
 [build-system]
@@ -53,8 +55,3 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
-
-[dependency-groups]
-dev = [
-    "pytest-cov>=7.0.0",
-]

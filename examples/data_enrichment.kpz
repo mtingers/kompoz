@@ -1,0 +1,14 @@
+# data_enrichment.kpz - Data Enrichment Pipeline with Modifiers
+# Demonstrates :retry and :cached modifiers
+#
+# :retry(n)              - retry up to n times on failure
+# :retry(n, backoff)     - with delay between retries (seconds)
+# :retry(n, b, true)     - exponential backoff (b, 2b, 4b, ...)
+# :retry(n, b, true, j)  - with random jitter added to delay
+# :cached                - cache result within use_cache() scope
+
+# Fetch external data with retries, then enrich from cache
+fetch_user_profile:retry(3, 0.5, true)
+>> lookup_geo_data:retry(2, 1.0):cached
+>> merge_records
+>> validate_output

@@ -1,0 +1,11 @@
+# content_moderation.kpz - Content Moderation Pipeline
+# Demonstrates word-syntax keywords (AND, OR, NOT)
+#
+# Word syntax is equivalent to symbol syntax:
+#   AND = &,  OR = |,  NOT = ~
+
+# Content is allowed if it passes all safety checks
+NOT is_spam
+AND NOT contains_profanity
+AND NOT is_duplicate
+AND (is_verified_author OR has_moderator_approval)

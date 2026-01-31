@@ -1,0 +1,22 @@
+# fraud_detection.kpz - Fraud Detection Rules
+# Demonstrates complex nested logic with modifiers
+#
+# Combines cached lookups, retryable external checks,
+# and layered boolean logic.
+
+# Flag as fraud if ANY suspicious signal fires
+(
+    # Velocity checks (cached - same user evaluated once)
+    transactions_exceed(50):cached
+    | rapid_location_changes:cached
+)
+| (
+    # External risk scoring (retryable network call)
+    risk_score_above(85):retry(3, 1.0, true)
+    & ~is_whitelisted
+)
+| (
+    # Known bad patterns
+    is_on_blocklist
+    & amount_above(10000)
+)

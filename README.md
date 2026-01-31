@@ -102,10 +102,14 @@ ok, _ = can_access.run(user)
 ## Features
 
 - **Operator Overloading**: Use `&` (and), `|` (or), `~` (not), `>>` (then) for intuitive composition
+- **Conditional Branching**: `if_then_else()` and ternary `?:` for explicit control flow
 - **Decorator Syntax**: Clean `@rule` and `@rule_args` decorators
 - **Parameterized Rules**: `account_older_than(30)` creates reusable predicates
-- **Expression DSL**: Human-readable rule expressions with AND/OR/NOT/THEN
-- **Async Support**: Full async/await support with tracing integration
+- **Validation with Errors**: `@vrule` / `@async_vrule` decorators collect all error messages
+- **Expression DSL**: Human-readable rule expressions with AND/OR/NOT/IF/THEN/ELSE
+- **Async Support**: Full async/await support with tracing and validation
+- **Caching**: `@cached_rule` and `use_cache()` to memoize expensive predicates
+- **Time-Based Rules**: `during_hours()`, `on_weekdays()`, `after_date()`, and more
 - **Error Tracking**: Transforms track exceptions via `last_error` attribute
 - **Retry with Observability**: Built-in retry logic with hooks for monitoring
 - **Type Hints**: Full typing support with generics
@@ -178,12 +182,13 @@ print(f"Access: {'granted' if ok else 'denied'}")
 
 ## Operators
 
-| Operator | Meaning    | Behavior                           |
-| -------- | ---------- | ---------------------------------- |
-| `a & b`  | AND / then | Run `b` only if `a` succeeds       |
-| `a \| b` | OR / else  | Run `b` only if `a` fails          |
-| `~a`     | NOT        | Invert success/failure             |
-| `a >> b` | THEN       | Always run both, keep `b`'s result |
+| Operator                | Meaning    | Behavior                                   |
+| ----------------------- | ---------- | ------------------------------------------ |
+| `a & b`                 | AND / then | Run `b` only if `a` succeeds               |
+| `a \| b`                | OR / else  | Run `b` only if `a` fails                  |
+| `~a`                    | NOT        | Invert success/failure                     |
+| `a >> b`                | THEN       | Always run both, keep `b`'s result         |
+| `a.if_else(b, c)`       | IF/ELSE    | If `a` succeeds run `b`, otherwise run `c` |
 
 The `>>` operator is useful for pipelines where you want to run steps unconditionally:
 
@@ -193,6 +198,22 @@ pipeline = validate_input >> log_attempt >> process_data
 
 # Cleanup pattern - cleanup always runs
 operation = do_work >> cleanup
+```
+
+### Conditional Branching
+
+Use `.if_else()` or the standalone `if_then_else()` for explicit branching. Unlike `|` (which is a fallback), conditional branching always executes exactly one branch:
+
+```python
+from kompoz import if_then_else
+
+# Method syntax
+pricing = is_premium.if_else(apply_discount, charge_full_price)
+
+# Function syntax
+pricing = if_then_else(is_premium, apply_discount, charge_full_price)
+
+ok, user = pricing.run(user)
 ```
 
 ## Transforms (Data Pipelines)
@@ -299,14 +320,14 @@ loaded = reg.load("is_admin AND is_active")  # same thing
 
 Both symbol and word syntax are supported:
 
-| Symbol | Word   | Meaning                             |
-| ------ | ------ | ----------------------------------- |
-| `&`    | `AND`  | All conditions must pass            |
-| `\|`   | `OR`   | Any condition must pass             |
-| `~`    | `NOT`  | Invert the condition                |
-| `!`    | `NOT`  | Invert (alias)                      |
-| `>>`   | `THEN` | Always run both, keep second result |
-| `()`   |        | Grouping                            |
+| Symbol          | Word             | Meaning                             |
+| --------------- | ---------------- | ----------------------------------- |
+| `&`             | `AND`            | All conditions must pass            |
+| `\|`            | `OR`             | Any condition must pass             |
+| `~`, `!`        | `NOT`            | Invert the condition                |
+| `>>`            | `THEN`           | Always run both, keep second result |
+| `a ? b : c`     | `IF a THEN b ELSE c` | Conditional branching          |
+| `()`            |                  | Grouping                            |
 
 
 ### Modifiers
@@ -349,6 +370,15 @@ loaded = reg.load("credit_above(700)")
 
 # Grouping with parentheses
 loaded = reg.load("is_admin | (is_active & ~is_banned)")
+
+# Conditional branching - IF/THEN/ELSE
+loaded = reg.load("IF is_premium THEN apply_discount ELSE charge_full")
+
+# Ternary syntax (equivalent to IF/THEN/ELSE)
+loaded = reg.load("is_premium ? apply_discount : charge_full")
+
+# Sequence - always run both, keep second result
+loaded = reg.load("validate >> transform >> format_output")
 
 # Modifiers - retry on failure
 loaded = reg.load("fetch_user:retry(3)")              # Retry up to 3 times
@@ -401,10 +431,12 @@ loaded = reg.load("""
 
 From lowest to highest:
 
-1. `OR` / `|`
-2. `AND` / `&`
-3. `NOT` / `~` / `!`
-4. `:modifier` (evaluated first, binds tightest)
+1. `IF/THEN/ELSE` / `? :` (conditional branching)
+2. `OR` / `|`
+3. `THEN` / `>>`
+4. `AND` / `&`
+5. `NOT` / `~` / `!`
+6. `:modifier` (evaluated first, binds tightest)
 
 ```python
 # This expression:
@@ -418,6 +450,9 @@ is_admin | (is_active & (~is_banned))
 
 # Conditionals have lowest precedence:
 a | b ? c : d  # Parsed as: (a | b) ? c : d
+
+# THEN is between OR and AND:
+a | b >> c & d  # Parsed as: a | ((b >> c) & d)
 
 # Modifiers bind to their immediate left:
 a & b:retry(3)  # Only b gets retry, not (a & b)
@@ -819,6 +854,35 @@ result = regular_users_only.validate(admin_user)
 # result.ok = False, result.errors = ["NOT condition failed (inner passed)"]
 ```
 
+### Async Validation
+
+Async validation works identically to sync validation:
+
+```python
+from kompoz import async_vrule, async_vrule_args
+
+@async_vrule(error="User must have permission")
+async def has_permission(user):
+    return await db.check_permission(user.id)
+
+@async_vrule(error=lambda u: f"{u.name} is banned!")
+async def not_banned(user):
+    return not await db.is_banned(user.id)
+
+@async_vrule_args(error="Credit score must be above {min_score}")
+async def credit_above(user, min_score):
+    score = await db.get_score(user.id)
+    return score >= min_score
+
+# Compose - collects ALL error messages
+can_trade = has_permission & not_banned & credit_above(700)
+
+# Validate
+result = await can_trade.validate(user)
+if not result.ok:
+    print(result.errors)
+```
+
 ## Async Support
 
 For rules that need to hit databases or APIs:
@@ -1006,11 +1070,14 @@ rule_docs = {
 
 ### Core Classes
 
-- **`Combinator[T]`**: Abstract base class for all combinators
+- **`Combinator[T]`**: Abstract base class for all combinators. Has `.if_else(then, else)` method.
 - **`Predicate[T]`**: Checks a condition, doesn't modify context. Supports `__eq__` and `__hash__`.
+- **`PredicateFactory[T]`**: Factory for parameterized predicates (created by `@rule_args`)
 - **`Transform[T]`**: Transforms context, fails on exception. Has `last_error` attribute. Supports `__eq__` and `__hash__`.
+- **`TransformFactory[T]`**: Factory for parameterized transforms (created by `@pipe_args`)
 - **`Try[T]`**: Wraps a function, converts exceptions to failure
 - **`Registry[T]`**: Register and load rules from expressions
+- **`ExpressionParser`**: Parser for human-readable rule expressions
 
 ### Decorators
 
@@ -1024,6 +1091,8 @@ rule_docs = {
 - **`@async_rule_args`**: Create a parameterized async predicate
 - **`@async_pipe`**: Create an async transform
 - **`@async_pipe_args`**: Create a parameterized async transform
+- **`@async_vrule`**: Create an async validating rule with error message
+- **`@async_vrule_args`**: Create a parameterized async validating rule
 - **`@cached_rule`**: Create a rule with result caching
 
 ### Functions
@@ -1031,8 +1100,10 @@ rule_docs = {
 - **`parse_expression(text)`**: Parse expression string into config dict
 - **`explain(combinator)`**: Generate plain English explanation of a rule
 - **`if_then_else(cond, then_branch, else_branch)`**: Create conditional combinator
+- **`async_if_then_else(cond, then_branch, else_branch)`**: Create async conditional combinator
 - **`use_tracing(hook, config)`**: Context manager to enable tracing
 - **`run_traced(combinator, ctx, hook, config)`**: Run with explicit tracing
+- **`run_async_traced(combinator, ctx, hook, config)`**: Run async combinator with explicit tracing
 - **`use_cache()`**: Context manager to enable caching
 
 ### Tracing Classes
@@ -1048,12 +1119,16 @@ rule_docs = {
 - **`ValidationResult`**: Result with ok, errors, and ctx
 - **`ValidatingCombinator`**: Base class for validating combinators. Supports `&`, `|`, and `~` operators.
 - **`ValidatingPredicate`**: Predicate with error message support
+- **`AsyncValidatingCombinator`**: Async base class for validating combinators
+- **`AsyncValidatingPredicate`**: Async predicate with error message support
 
 ### Async Classes
 
-- **`AsyncCombinator`**: Base class for async combinators. Integrates with `use_tracing()`.
+- **`AsyncCombinator`**: Base class for async combinators. Has `.if_else(then, else)` method. Integrates with `use_tracing()`.
 - **`AsyncPredicate`**: Async predicate
+- **`AsyncPredicateFactory`**: Factory for parameterized async predicates
 - **`AsyncTransform`**: Async transform. Has `last_error` attribute.
+- **`AsyncTransformFactory`**: Factory for parameterized async transforms
 - **`AsyncRetry`**: Async retry with backoff and observability hooks
 
 ### Retry & Caching
@@ -1081,17 +1156,25 @@ rule_docs = {
 
 The `examples/` directory contains:
 
-| File                    | Description                                       |
-| ----------------------- | ------------------------------------------------- |
-| `rules_example.py`      | Using `@rule` and `@rule_args` decorators         |
-| `transforms_example.py` | Using `@pipe` and `@pipe_args` for data pipelines |
-| `registry_example.py`   | Loading rules from `.kpz` files                   |
-| `tracing_example.py`    | Tracing, debugging, and explaining rules          |
-| `validation_example.py` | Validation with error messages                    |
-| `async_example.py`      | Async rules, transforms, and retry                |
-| `temporal_example.py`   | Time-based and date-based rules                   |
-| `access_control.kpz`    | Example access control expression                 |
-| `trading.kpz`           | Example trading permission expression             |
+| File                        | Description                                       |
+| --------------------------- | ------------------------------------------------- |
+| `rules_example.py`          | Using `@rule` and `@rule_args` decorators         |
+| `transforms_example.py`     | Using `@pipe` and `@pipe_args` for data pipelines |
+| `registry_example.py`       | Loading rules from `.kpz` files                   |
+| `tracing_example.py`        | Tracing, debugging, and explaining rules          |
+| `validation_example.py`     | Validation with error messages                    |
+| `async_example.py`          | Async rules, transforms, and retry                |
+| `temporal_example.py`       | Time-based and date-based rules                   |
+| `then_operator_example.py`  | Using `>>` (THEN) for sequencing                  |
+| `access_control.kpz`        | Access control with AND/OR/NOT                    |
+| `trading.kpz`               | Tiered trading permissions                        |
+| `pipeline.kpz`              | Data pipeline with `>>` (THEN) operator           |
+| `pricing.kpz`               | IF/THEN/ELSE conditional branching                |
+| `tiered_pricing.kpz`        | Nested IF/THEN/ELSE for multi-tier logic          |
+| `content_moderation.kpz`    | Word-syntax keywords (AND, OR, NOT)               |
+| `data_enrichment.kpz`       | `:retry` and `:cached` modifiers                  |
+| `fraud_detection.kpz`       | Complex nested logic with modifiers               |
+| `feature_flags.kpz`         | Ternary `? :` syntax with `:cached`               |
 
 Run examples:
 

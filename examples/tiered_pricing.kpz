@@ -1,0 +1,11 @@
+# tiered_pricing.kpz - Nested Conditional Pricing
+# Demonstrates nested IF/THEN/ELSE for multi-tier branching
+
+# Tiered discount: VIP > Premium > Standard
+IF is_vip
+THEN apply_discount(40)
+ELSE (
+    IF is_premium
+    THEN apply_discount(20)
+    ELSE apply_discount(0)
+)

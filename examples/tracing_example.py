@@ -29,8 +29,9 @@ from kompoz import (
 # 2. Setup Tracer (for Traces)
 resource = Resource(attributes={"service.name": "kompoz-tracing-example"})
 trace_provider = TracerProvider(resource=resource)
-otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
-# otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:14250", insecure=True)
+# otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
+# otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:14318/v1/traces", insecure=True)
+otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:14317", insecure=True)
 trace_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(trace_provider)
 
@@ -145,7 +146,7 @@ if __name__ == "__main__":
     print("TRACED RUN: Leaf predicates only")
     print("=" * 60)
     print()
-    with use_tracing(PrintHook()): # TraceConfig(include_leaf_only=False)):
+    with use_tracing(PrintHook()):  # TraceConfig(include_leaf_only=False)):
         ok, _ = can_access.run(user)
     print()
     print(f"Result: {'✓ Access granted' if ok else '✗ Access denied'}")

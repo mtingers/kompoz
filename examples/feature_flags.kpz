@@ -1,0 +1,10 @@
+# feature_flags.kpz - Feature Flag Evaluation
+# Demonstrates ternary (? :) syntax and :cached modifier
+#
+# Ternary syntax:  condition ? then_branch : else_branch
+# Equivalent to:   IF condition THEN then_branch ELSE else_branch
+
+# Route users to new or old checkout based on flag + rollout %
+(is_beta_tester | in_rollout_percent(25)):cached
+? enable_new_checkout
+: enable_legacy_checkout
