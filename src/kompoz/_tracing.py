@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from kompoz._async import AsyncCombinator, _async_traced_run
 from kompoz._caching import CachedPredicate
@@ -21,7 +20,7 @@ from kompoz._temporal import (
     on_weekdays,
 )
 from kompoz._transform import Transform
-from kompoz._types import T, _trace_config, _trace_hook
+from kompoz._types import T, TraceConfig, TraceHook, _trace_config, _trace_hook
 from kompoz._utility import Always, Debug, Never, Try
 from kompoz._validation import (
     ValidatingPredicate,
@@ -52,89 +51,6 @@ except ImportError:
     _Status = None
     _StatusCode = None
     _set_span_in_context = None
-
-
-@runtime_checkable
-class TraceHook(Protocol):
-    """
-    Protocol for trace hooks.
-
-    Implement this to integrate with logging, OpenTelemetry, or other
-    tracing systems.
-
-    Example:
-        class MyHook:
-            def on_enter(self, name, ctx, depth):
-                print(f"{'  ' * depth}-> {name}")
-                return None  # span token
-
-            def on_exit(self, span, name, ok, duration_ms, depth):
-                status = "✔" if ok else "✗"
-                print(f"{'  ' * depth}<- {name} {status} ({duration_ms:.2f}ms)")
-
-            def on_error(self, span, name, error, duration_ms, depth):
-                print(f"{'  ' * depth}<- {name} ERROR: {error}")
-    """
-
-    def on_enter(self, name: str, ctx: Any, depth: int) -> Any:
-        """
-        Called before running a combinator.
-
-        Args:
-            name: Name/description of the combinator
-            ctx: Current context being evaluated
-            depth: Nesting depth (0 = root)
-
-        Returns:
-            Span token to pass to on_exit (can be None)
-        """
-        ...
-
-    def on_exit(
-        self, span: Any, name: str, ok: bool, duration_ms: float, depth: int
-    ) -> None:
-        """
-        Called after a combinator completes.
-
-        Args:
-            span: Token returned from on_enter
-            name: Name/description of the combinator
-            ok: Whether the combinator succeeded
-            duration_ms: Execution time in milliseconds
-            depth: Nesting depth
-        """
-        ...
-
-    def on_error(
-        self, span: Any, name: str, error: Exception, duration_ms: float, depth: int
-    ) -> None:
-        """
-        Optional: Called if a combinator raises an exception.
-
-        Args:
-            span: Token returned from on_enter
-            name: Name/description of the combinator
-            error: The exception that was raised
-            duration_ms: Execution time in milliseconds
-            depth: Nesting depth
-        """
-        ...
-
-
-@dataclass
-class TraceConfig:
-    """
-    Configuration for tracing behavior.
-
-    Attributes:
-        nested: If True, trace child combinators (AND, OR, NOT children)
-        max_depth: Maximum depth to trace (None = unlimited)
-        include_leaf_only: If True, only trace leaf combinators (Predicate, Transform)
-    """
-
-    nested: bool = True
-    max_depth: int | None = None
-    include_leaf_only: bool = False
 
 
 @contextmanager

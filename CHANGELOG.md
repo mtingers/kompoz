@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-01
+
+### Fixed
+
+- Resolve duplicate `TraceConfig` and `TraceHook` definitions across `_types` and `_tracing` modules that caused pyright cross-module type mismatches
+- Fix `_get_combinator_name` in `_validation.py` to use `getattr` instead of `hasattr` guard (pyright cannot narrow types from `hasattr`)
+- Add type: ignore annotations for test-level pyright inference limitations (unresolved generics in decorator lambdas, dynamic attribute assignment on functions, broad return types from `parallel_and`/`parallel_or`/`parse_expression`)
+
 ## [0.2.0] - 2026-02-01
 
 ### Fixed

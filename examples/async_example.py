@@ -7,6 +7,7 @@ that need to hit databases, APIs, or other async services.
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from kompoz import (
     AsyncRetry,
@@ -34,13 +35,13 @@ class User:
 class MockDatabase:
     """Simulated async database."""
 
-    PERMISSIONS = {
+    PERMISSIONS: ClassVar[dict[int, list[str]]] = {
         1: ["read", "write"],
         2: ["read"],
         3: ["read", "write", "admin"],
     }
 
-    PROFILES = {
+    PROFILES: ClassVar[dict[int, dict[str, str | bool]]] = {
         1: {"tier": "premium", "verified": True},
         2: {"tier": "basic", "verified": False},
         3: {"tier": "enterprise", "verified": True},
@@ -274,7 +275,7 @@ async def main():
         "has_permission(write)",
         "has_role(admin)",
     ]
-    for name, (ok, _) in zip(checks, results):
+    for name, (ok, _) in zip(checks, results, strict=False):
         status = "✓" if ok else "✗"
         print(f"  {status} {name}")
 

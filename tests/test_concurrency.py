@@ -483,7 +483,7 @@ class TestParallelValidatingOr:
             return True
 
         combo = parallel_or(check_a, check_b)
-        vr = asyncio.run(combo.validate(1))
+        vr = asyncio.run(combo.validate(1))  # type: ignore[reportAttributeAccessIssue]
         assert vr.ok is True
         assert vr.errors == []
 
@@ -497,7 +497,7 @@ class TestParallelValidatingOr:
             return ctx % 2 == 0
 
         combo = parallel_or(check_pos, check_even)
-        vr = asyncio.run(combo.validate(-3))
+        vr = asyncio.run(combo.validate(-3))  # type: ignore[reportAttributeAccessIssue]
         assert vr.ok is False
         assert "must be positive" in vr.errors
         assert "must be even" in vr.errors

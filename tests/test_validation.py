@@ -62,7 +62,7 @@ class TestVrule:
         assert result.errors == ["Check failed: is_active"]
 
     def test_vrule_callable_error(self):
-        @vrule(error=lambda u: f"{u.name} is not admin")
+        @vrule(error=lambda u: f"{u.name} is not admin")  # type: ignore[reportAttributeAccessIssue]
         def is_admin(u):
             return u.is_admin
 
@@ -254,7 +254,7 @@ class TestAsyncVrule:
         assert "Check failed: is_active" in result.errors[0]
 
     def test_async_vrule_callable_error(self):
-        @async_vrule(error=lambda u: f"{u.name} denied")
+        @async_vrule(error=lambda u: f"{u.name} denied")  # type: ignore[reportAttributeAccessIssue]
         async def is_admin(u):
             return u.is_admin
 

@@ -67,7 +67,7 @@ class TestCachedRule:
     def test_custom_key_fn(self):
         call_count = 0
 
-        @cached_rule(key=lambda x: x % 10)
+        @cached_rule(key=lambda x: x % 10)  # type: ignore[reportOperatorIssue]
         def check(x):
             nonlocal call_count
             call_count += 1
@@ -239,7 +239,7 @@ class TestAsyncCachedRule:
     def test_custom_key_fn(self):
         call_count = 0
 
-        @async_cached_rule(key=lambda x: x % 10)
+        @async_cached_rule(key=lambda x: x % 10)  # type: ignore[reportOperatorIssue]
         async def check(x):
             nonlocal call_count
             call_count += 1

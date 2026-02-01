@@ -18,9 +18,7 @@ from kompoz._types import T
 
 def _get_combinator_name(combinator: Combinator) -> str:
     """Get a human-readable name for a combinator (simple version for validation)."""
-    if hasattr(combinator, "name"):
-        return combinator.name
-    return repr(combinator)
+    return getattr(combinator, "name", repr(combinator))
 
 
 @dataclass

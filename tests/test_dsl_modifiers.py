@@ -273,13 +273,13 @@ class TestModifierEdgeCases:
         result2 = parse_expression("fetch:retry(3, 1.0, TRUE)")
         result3 = parse_expression("fetch:retry(3, 1.0, True)")
         # All should parse to the same thing
-        assert result1["retry"]["args"][2] is True
-        assert result2["retry"]["args"][2] is True
-        assert result3["retry"]["args"][2] is True
+        assert result1["retry"]["args"][2] is True  # type: ignore[reportArgumentType]
+        assert result2["retry"]["args"][2] is True  # type: ignore[reportArgumentType]
+        assert result3["retry"]["args"][2] is True  # type: ignore[reportArgumentType]
 
     def test_false_values(self):
         result = parse_expression("fetch:retry(3, 1.0, false)")
-        assert result["retry"]["args"][2] is False
+        assert result["retry"]["args"][2] is False  # type: ignore[reportArgumentType]
 
     def test_modifier_preserves_comments(self):
         result = parse_expression("""

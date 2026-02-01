@@ -73,7 +73,7 @@ class TestRetry:
             raise ValueError("nope")
 
         r = Retry(always_fail, max_attempts=3)
-        ok, result = r.run(10)
+        ok, result = r.run(10)  # type: ignore[reportArgumentType]
         assert not ok
         assert result == 10  # original context
         assert r.attempts_made == 3
@@ -122,7 +122,7 @@ class TestRetry:
         @pipe
         def fail_once(x):
             if not hasattr(fail_once, "_called"):
-                fail_once._called = True
+                fail_once._called = True  # type: ignore[reportAttributeAccessIssue]
                 raise ValueError("first")
             return x
 
@@ -151,7 +151,7 @@ class TestRetry:
             exponential=True,
             on_retry=on_retry,
         )
-        r.run(1)
+        r.run(1)  # type: ignore[reportArgumentType]
 
         # Delays should be 0.001, 0.002, 0.004 (exponential, no jitter)
         assert len(delays) == 3
@@ -313,7 +313,7 @@ class TestAsyncRetry:
         assert r.attempts_made == 3
         # AsyncTransform catches exceptions internally, so last_error is None
         # The inner AsyncTransform.last_error has the exception instead
-        assert r.inner.last_error is not None
+        assert r.inner.last_error is not None  # type: ignore[reportAttributeAccessIssue]
 
     def test_exhausts_with_raising_async_predicate(self):
         from kompoz import async_rule
@@ -352,7 +352,7 @@ class TestAsyncRetry:
 
         async def fail_once(x):
             if not hasattr(fail_once, "_done"):
-                fail_once._done = True
+                fail_once._done = True  # type: ignore[reportFunctionMemberAccess]
                 raise ValueError("first")
             return x
 
@@ -369,7 +369,7 @@ class TestAsyncRetry:
 
         async def fail_once(x):
             if not hasattr(fail_once, "_done"):
-                fail_once._done = True
+                fail_once._done = True  # type: ignore[reportFunctionMemberAccess]
                 raise ValueError("first")
             return x
 
