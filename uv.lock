@@ -336,33 +336,25 @@ wheels = [
 name = "kompoz"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp" },
-    { name = "opentelemetry-sdk" },
-]
 
 [package.optional-dependencies]
 dev = [
     { name = "pytest-cov" },
 ]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest-cov" },
+opentelemetry = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "opentelemetry-api", specifier = ">=1.39.1" },
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.1" },
-    { name = "opentelemetry-sdk", specifier = ">=1.39.1" },
+    { name = "opentelemetry-api", marker = "extra == 'opentelemetry'", specifier = ">=1.39.1" },
+    { name = "opentelemetry-exporter-otlp", marker = "extra == 'opentelemetry'", specifier = ">=1.39.1" },
+    { name = "opentelemetry-sdk", marker = "extra == 'opentelemetry'", specifier = ">=1.39.1" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.0.0" },
 ]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest-cov", specifier = ">=7.0.0" }]
+provides-extras = ["opentelemetry", "dev"]
 
 [[package]]
 name = "opentelemetry-api"
