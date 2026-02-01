@@ -1,6 +1,6 @@
 [project]
 name = "kompoz"
-version = "0.2.2"
+version = "0.2.3"
 description = "Composable predicate and transform combinators with operator overloading"
 license = "MIT"
 readme = "README.md"
@@ -47,7 +47,7 @@ opentelemetry = [
 ]
 dev = [
     "pytest-cov>=7.0.0",
-    "mypy>=1.14",
+    "pyright>=1.1",
     "pre-commit>=4.0",
 ]
 
@@ -56,7 +56,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=7.0.0",
     "ruff>=0.9.0",
-    "mypy>=1.14",
+    "pyright>=1.1",
     "pre-commit>=4.0",
 ]
 
@@ -79,11 +79,8 @@ ignore = [
     "SIM108", # use ternary
 ]
 
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-check_untyped_defs = true
-show_error_codes = true
+[tool.pyright]
+pythonVersion = "3.10"
 
 [tool.coverage.run]
 source = ["kompoz"]

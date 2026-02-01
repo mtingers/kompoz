@@ -12,7 +12,7 @@ format: ## Format code
 	uv run ruff format src/ tests/
 
 typecheck: ## Run type checker
-	uv run mypy src/kompoz/
+	uv run --extra opentelemetry pyright src/
 
 test: ## Run tests
 	uv run pytest

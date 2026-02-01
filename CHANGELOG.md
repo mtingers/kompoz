@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-02-01
+
+### Changed
+
+- Replace mypy with pyright for type checking in Makefile, CI workflow, and pyproject.toml
+- Install opentelemetry extra during typecheck so pyright can resolve optional imports
+
 ## [0.2.2] - 2026-02-01
 
 ### Fixed
