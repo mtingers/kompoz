@@ -175,9 +175,7 @@ class _AsyncValidatingOr(AsyncValidatingCombinator[T]):
                     ctx=result_ctx,
                 )
 
-        return last_result or ValidationResult(
-            ok=False, errors=["No conditions to check"], ctx=ctx
-        )
+        return last_result or ValidationResult(ok=False, errors=["No conditions to check"], ctx=ctx)
 
 
 class _AsyncValidatingNot(AsyncValidatingCombinator[T]):
@@ -197,18 +195,13 @@ class _AsyncValidatingNot(AsyncValidatingCombinator[T]):
             inner_result = await self.inner.validate(ctx)
             if inner_result.ok:
                 error_msg = self._error or "NOT condition failed (inner passed)"
-                return ValidationResult(
-                    ok=False, errors=[error_msg], ctx=inner_result.ctx
-                )
+                return ValidationResult(ok=False, errors=[error_msg], ctx=inner_result.ctx)
             else:
                 return ValidationResult(ok=True, errors=[], ctx=inner_result.ctx)
         else:
             ok, result = await self.inner._execute(ctx)
             if ok:
-                error_msg = (
-                    self._error
-                    or f"NOT {_get_async_combinator_name(self.inner)} failed"
-                )
+                error_msg = self._error or f"NOT {_get_async_combinator_name(self.inner)} failed"
                 return ValidationResult(ok=False, errors=[error_msg], ctx=result)
             else:
                 return ValidationResult(ok=True, errors=[], ctx=result)
@@ -230,10 +223,7 @@ def async_vrule(
     fn: Callable[[T], Any] | None = None,
     *,
     error: str | Callable[[T], str] | None = None,
-) -> (
-    AsyncValidatingPredicate[T]
-    | Callable[[Callable[[T], Any]], AsyncValidatingPredicate[T]]
-):
+) -> AsyncValidatingPredicate[T] | Callable[[Callable[[T], Any]], AsyncValidatingPredicate[T]]:
     """
     Decorator to create an async validating rule with an error message.
 
@@ -369,9 +359,7 @@ class _AsyncParallelAnd(AsyncCombinator[T]):
         return await self._execute_wait_all(ctx)
 
     async def _execute_wait_all(self, ctx: T) -> tuple[bool, T]:
-        results = await asyncio.gather(
-            *(child._execute(ctx) for child in self.children)
-        )
+        results = await asyncio.gather(*(child._execute(ctx) for child in self.children))
         all_ok = all(ok for ok, _ in results)
         return all_ok, ctx
 
@@ -382,9 +370,7 @@ class _AsyncParallelAnd(AsyncCombinator[T]):
         try:
             pending = set(tasks)
             while pending:
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
                 for task in done:
                     try:
@@ -435,9 +421,7 @@ class _AsyncParallelValidatingAnd(AsyncValidatingCombinator[T]):
         return await self._execute_wait_all(ctx)
 
     async def _execute_wait_all(self, ctx: T) -> tuple[bool, T]:
-        results = await asyncio.gather(
-            *(child._execute(ctx) for child in self.children)
-        )
+        results = await asyncio.gather(*(child._execute(ctx) for child in self.children))
         all_ok = all(ok for ok, _ in results)
         return all_ok, ctx
 
@@ -448,9 +432,7 @@ class _AsyncParallelValidatingAnd(AsyncValidatingCombinator[T]):
         try:
             pending = set(tasks)
             while pending:
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
                 for task in done:
                     try:
@@ -490,9 +472,7 @@ class _AsyncParallelValidatingAnd(AsyncValidatingCombinator[T]):
                     return [f"Check failed: {_get_async_combinator_name(child)}"]
                 return []
 
-        error_lists = await asyncio.gather(
-            *(_validate_one(child) for child in self.children)
-        )
+        error_lists = await asyncio.gather(*(_validate_one(child) for child in self.children))
         errors: list[str] = []
         for err_list in error_lists:
             errors.extend(err_list)
@@ -568,9 +548,7 @@ class _AsyncParallelOr(AsyncCombinator[T]):
         try:
             pending = set(tasks)
             while pending:
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
                 for task in done:
                     try:
@@ -632,9 +610,7 @@ class _AsyncParallelValidatingOr(AsyncValidatingCombinator[T]):
         try:
             pending = set(tasks)
             while pending:
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
                 for task in done:
                     try:
@@ -681,9 +657,7 @@ class _AsyncParallelValidatingOr(AsyncValidatingCombinator[T]):
                     return True, []
                 return False, [f"Check failed: {_get_async_combinator_name(child)}"]
 
-        results = await asyncio.gather(
-            *(_validate_one(child) for child in self.children)
-        )
+        results = await asyncio.gather(*(_validate_one(child) for child in self.children))
 
         # If any succeeded, return success
         for ok, _ in results:

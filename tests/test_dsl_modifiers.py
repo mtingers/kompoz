@@ -88,9 +88,7 @@ class TestModifierParser:
         assert result == {"or": ["a", {"retry": {"inner": "b", "args": [3]}}, "c"]}
 
     def test_complex_expression_with_modifier(self):
-        result = parse_expression(
-            "is_admin | (is_active & ~is_banned & fetch:retry(3, 1.0))"
-        )
+        result = parse_expression("is_admin | (is_active & ~is_banned & fetch:retry(3, 1.0))")
         expected = {
             "or": [
                 "is_admin",
@@ -110,9 +108,7 @@ class TestModifierParser:
             is_admin
             | fetch_data:retry(3)
         """)
-        assert result == {
-            "or": ["is_admin", {"retry": {"inner": "fetch_data", "args": [3]}}]
-        }
+        assert result == {"or": ["is_admin", {"retry": {"inner": "fetch_data", "args": [3]}}]}
 
     def test_unknown_modifier_raises(self):
         with pytest.raises(ValueError, match="Unknown modifier"):
@@ -263,9 +259,7 @@ class TestModifierEdgeCases:
 
     def test_nested_grouping_with_modifiers(self):
         result = parse_expression("((a | b):cached):retry(3)")
-        assert result == {
-            "retry": {"inner": {"cached": {"or": ["a", "b"]}}, "args": [3]}
-        }
+        assert result == {"retry": {"inner": {"cached": {"or": ["a", "b"]}}, "args": [3]}}
 
     def test_bool_case_insensitive(self):
         # TRUE and True should both work
@@ -286,6 +280,4 @@ class TestModifierEdgeCases:
             fetch:retry(3)  # retry this flaky call
             & process
         """)
-        assert result == {
-            "and": [{"retry": {"inner": "fetch", "args": [3]}}, "process"]
-        }
+        assert result == {"and": [{"retry": {"inner": "fetch", "args": [3]}}, "process"]}

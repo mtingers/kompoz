@@ -135,11 +135,7 @@ class ExpressionParser:
             elif ch == "|":
                 self.tokens.append((self.OR, "|"))
                 self.pos += 1
-            elif (
-                ch == ">"
-                and self.pos + 1 < len(self.text)
-                and self.text[self.pos + 1] == ">"
-            ):
+            elif ch == ">" and self.pos + 1 < len(self.text) and self.text[self.pos + 1] == ">":
                 self.tokens.append((self.THEN, ">>"))
                 self.pos += 2
             elif ch in "~!":
@@ -167,9 +163,7 @@ class ExpressionParser:
 
             # Numbers
             elif ch.isdigit() or (
-                ch == "-"
-                and self.pos + 1 < len(self.text)
-                and self.text[self.pos + 1].isdigit()
+                ch == "-" and self.pos + 1 < len(self.text) and self.text[self.pos + 1].isdigit()
             ):
                 self.tokens.append((self.NUMBER, self._read_number()))
 
@@ -401,9 +395,7 @@ class ExpressionParser:
 
             # Peek at what comes after the identifier
             next_pos = self.token_pos + 1
-            next_token = (
-                self.tokens[next_pos][0] if next_pos < len(self.tokens) else self.EOF
-            )
+            next_token = self.tokens[next_pos][0] if next_pos < len(self.tokens) else self.EOF
 
             if modifier not in self.MODIFIERS:
                 # Only raise error if it looks like a modifier call (has parens)
@@ -716,9 +708,7 @@ class Registry(Generic[T]):
                 jitter = float(args[3]) if len(args) > 3 else 0.0
 
                 if max_attempts < 1:
-                    raise ValueError(
-                        f"retry max_attempts must be >= 1, got {max_attempts}"
-                    )
+                    raise ValueError(f"retry max_attempts must be >= 1, got {max_attempts}")
                 if backoff < 0:
                     raise ValueError(f"retry backoff must be >= 0, got {backoff}")
                 if jitter < 0:

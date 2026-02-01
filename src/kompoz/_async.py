@@ -292,17 +292,11 @@ async def _async_traced_run_iterative(
             return ok, ctx
 
         elif isinstance(combinator, _AsyncIfThenElse):
-            cond_ok, new_ctx = await process_node(
-                combinator.condition, current_ctx, depth + 1
-            )
+            cond_ok, new_ctx = await process_node(combinator.condition, current_ctx, depth + 1)
             if cond_ok:
-                ok, result = await process_node(
-                    combinator.then_branch, new_ctx, depth + 1
-                )
+                ok, result = await process_node(combinator.then_branch, new_ctx, depth + 1)
             else:
-                ok, result = await process_node(
-                    combinator.else_branch, new_ctx, depth + 1
-                )
+                ok, result = await process_node(combinator.else_branch, new_ctx, depth + 1)
             duration_ms = (time.perf_counter() - start) * 1000
             hook.on_exit(span, name, ok, duration_ms, depth)
             return ok, result
@@ -312,9 +306,7 @@ async def _async_traced_run_iterative(
             async def _trace_child(child: AsyncCombinator[T]) -> tuple[bool, T]:
                 return await process_node(child, current_ctx, depth + 1)
 
-            results = await asyncio.gather(
-                *(_trace_child(child) for child in combinator.children)
-            )
+            results = await asyncio.gather(*(_trace_child(child) for child in combinator.children))
             all_ok = all(ok for ok, _ in results)
             duration_ms = (time.perf_counter() - start) * 1000
             hook.on_exit(span, name, all_ok, duration_ms, depth)
@@ -371,9 +363,7 @@ async def _async_traced_run_iterative(
             return await process_node(children[-1], ctx, depth + 1)
 
         elif isinstance(combinator, _AsyncIfThenElse):
-            cond_ok, new_ctx = await process_node(
-                combinator.condition, current_ctx, depth + 1
-            )
+            cond_ok, new_ctx = await process_node(combinator.condition, current_ctx, depth + 1)
             if cond_ok:
                 return await process_node(combinator.then_branch, new_ctx, depth + 1)
             else:

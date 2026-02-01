@@ -146,9 +146,7 @@ class CachedPredicateFactory(Generic[T]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> CachedPredicate[T]:
         name = f"{self._name}({', '.join(map(repr, args))})"
-        return CachedPredicate(
-            lambda ctx: self._fn(ctx, *args, **kwargs), name, self._key_fn
-        )
+        return CachedPredicate(lambda ctx: self._fn(ctx, *args, **kwargs), name, self._key_fn)
 
     def __repr__(self) -> str:
         return f"CachedPredicateFactory({self._name})"
@@ -280,9 +278,7 @@ class AsyncCachedPredicateFactory(Generic[T]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> AsyncCachedPredicate[T]:
         name = f"{self._name}({', '.join(map(repr, args))})"
-        return AsyncCachedPredicate(
-            lambda ctx: self._fn(ctx, *args, **kwargs), name, self._key_fn
-        )
+        return AsyncCachedPredicate(lambda ctx: self._fn(ctx, *args, **kwargs), name, self._key_fn)
 
     def __repr__(self) -> str:
         return f"AsyncCachedPredicateFactory({self._name})"

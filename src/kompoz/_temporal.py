@@ -88,9 +88,7 @@ class during_hours(Combinator[T]):
 
     def __repr__(self) -> str:
         if self.inclusive_end:
-            return (
-                f"during_hours({self.start_hour}, {self.end_hour}, inclusive_end=True)"
-            )
+            return f"during_hours({self.start_hour}, {self.end_hour}, inclusive_end=True)"
         return f"during_hours({self.start_hour}, {self.end_hour})"
 
 
@@ -155,9 +153,7 @@ class after_date(Combinator[T]):
         post_launch = after_date(date(2024, 6, 1))
     """
 
-    def __init__(
-        self, year_or_date: int | date, month: int | None = None, day: int | None = None
-    ):
+    def __init__(self, year_or_date: int | date, month: int | None = None, day: int | None = None):
         if isinstance(year_or_date, date):
             self.date = year_or_date
         else:
@@ -182,9 +178,7 @@ class before_date(Combinator[T]):
         promo_active = before_date(2024, 12, 31)
     """
 
-    def __init__(
-        self, year_or_date: int | date, month: int | None = None, day: int | None = None
-    ):
+    def __init__(self, year_or_date: int | date, month: int | None = None, day: int | None = None):
         if isinstance(year_or_date, date):
             self.date = year_or_date
         else:
@@ -229,12 +223,7 @@ class between_dates(Combinator[T]):
             self.end_date = end_or_start_month
         elif isinstance(start, int) and isinstance(end_or_start_month, int):
             # Constructor: between_dates(y1, m1, d1, y2, m2, d2)
-            if (
-                start_day is None
-                or end_year is None
-                or end_month is None
-                or end_day is None
-            ):
+            if start_day is None or end_year is None or end_month is None or end_day is None:
                 raise ValueError("Must provide all 6 arguments for date range")
             self.start_date = date(start, end_or_start_month, start_day)
             self.end_date = date(end_year, end_month, end_day)

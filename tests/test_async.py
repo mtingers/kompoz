@@ -281,9 +281,7 @@ class TestAsyncIfThenElse:
         assert result.label == "full"
 
     def test_standalone_function(self):
-        pricing = async_if_then_else(
-            self.is_premium, self.apply_discount, self.full_price
-        )
+        pricing = async_if_then_else(self.is_premium, self.apply_discount, self.full_price)
         ok, result = asyncio.run(pricing.run(Ctx(200)))
         assert ok
         assert result.value == 160

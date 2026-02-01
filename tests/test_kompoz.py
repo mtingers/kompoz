@@ -425,28 +425,16 @@ class TestRegistry:
 
         # Should pass
         assert loaded.run(User("Admin", is_admin=True))[0] is True
-        assert (
-            loaded.run(User("Good", account_age_days=60, credit_score=700))[0] is True
-        )
-        assert (
-            loaded.run(User("Override", account_age_days=60, has_override=True))[0]
-            is True
-        )
+        assert loaded.run(User("Good", account_age_days=60, credit_score=700))[0] is True
+        assert loaded.run(User("Override", account_age_days=60, has_override=True))[0] is True
 
         # Should fail
         assert (
-            loaded.run(
-                User("Banned", is_banned=True, account_age_days=60, credit_score=700)
-            )[0]
+            loaded.run(User("Banned", is_banned=True, account_age_days=60, credit_score=700))[0]
             is False
         )
-        assert (
-            loaded.run(User("New", account_age_days=10, credit_score=700))[0] is False
-        )
-        assert (
-            loaded.run(User("LowCredit", account_age_days=60, credit_score=500))[0]
-            is False
-        )
+        assert loaded.run(User("New", account_age_days=10, credit_score=700))[0] is False
+        assert loaded.run(User("LowCredit", account_age_days=60, credit_score=500))[0] is False
 
     def test_load_multiline_with_comments(self, user_registry: Registry[User]) -> None:
         loaded = user_registry.load("""

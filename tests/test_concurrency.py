@@ -290,9 +290,7 @@ class TestAsyncCircuitBreaker:
         async def failing_check(ctx):
             return False
 
-        cb = circuit_breaker(
-            failing_check, failure_threshold=2, on_state_change=on_change
-        )
+        cb = circuit_breaker(failing_check, failure_threshold=2, on_state_change=on_change)
 
         async def test():
             await cb.run(1)
@@ -596,9 +594,7 @@ class TestConcurrencyIntegration:
                 await asyncio.sleep(0.5)  # Will timeout
             return True
 
-        protected = circuit_breaker(
-            with_timeout(flaky, timeout=0.1), failure_threshold=5
-        )
+        protected = circuit_breaker(with_timeout(flaky, timeout=0.1), failure_threshold=5)
 
         async def test():
             # First two calls timeout, third succeeds

@@ -55,9 +55,7 @@ class AsyncTimeout(AsyncCombinator[T]):
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
         try:
-            result = await asyncio.wait_for(
-                self.inner._execute(ctx), timeout=self.timeout
-            )
+            result = await asyncio.wait_for(self.inner._execute(ctx), timeout=self.timeout)
             self.timed_out = False
             return result
         except asyncio.TimeoutError:
@@ -155,9 +153,7 @@ class AsyncLimited(AsyncCombinator[T], Generic[T]):
             lock = await self._get_registry_lock()
             async with lock:
                 if self.name not in self._named_semaphores:
-                    self._named_semaphores[self.name] = asyncio.Semaphore(
-                        self.max_concurrent
-                    )
+                    self._named_semaphores[self.name] = asyncio.Semaphore(self.max_concurrent)
                 return self._named_semaphores[self.name]
         else:
             # Instance-specific semaphore
@@ -275,9 +271,7 @@ class AsyncCircuitBreaker(AsyncCombinator[T], Generic[T]):
         failure_threshold: int = 5,
         recovery_timeout: float = 30.0,
         half_open_max_calls: int = 1,
-        on_state_change: Callable[
-            [CircuitState, CircuitState, CircuitBreakerStats], Any
-        ]
+        on_state_change: Callable[[CircuitState, CircuitState, CircuitBreakerStats], Any]
         | None = None,
     ):
         self.inner = inner
@@ -358,8 +352,7 @@ class AsyncCircuitBreaker(AsyncCombinator[T], Generic[T]):
                 # Any failure in half-open immediately opens
                 await self._change_state(CircuitState.OPEN)
             elif (
-                self._state == CircuitState.CLOSED
-                and self._failure_count >= self.failure_threshold
+                self._state == CircuitState.CLOSED and self._failure_count >= self.failure_threshold
             ):
                 await self._change_state(CircuitState.OPEN)
 
@@ -412,8 +405,7 @@ def circuit_breaker(
     failure_threshold: int = 5,
     recovery_timeout: float = 30.0,
     half_open_max_calls: int = 1,
-    on_state_change: Callable[[CircuitState, CircuitState, CircuitBreakerStats], Any]
-    | None = None,
+    on_state_change: Callable[[CircuitState, CircuitState, CircuitBreakerStats], Any] | None = None,
 ) -> AsyncCircuitBreaker[T]:
     """
     Wrap an async combinator with circuit breaker protection.

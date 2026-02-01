@@ -21,9 +21,7 @@ class TraceHook(Protocol):
 
     def on_enter(self, name: str, ctx: Any, depth: int) -> Any: ...
 
-    def on_exit(
-        self, span: Any, name: str, ok: bool, duration_ms: float, depth: int
-    ) -> None: ...
+    def on_exit(self, span: Any, name: str, ok: bool, duration_ms: float, depth: int) -> None: ...
 
     def on_error(
         self, span: Any, name: str, error: Exception, duration_ms: float, depth: int
@@ -55,9 +53,7 @@ AsyncRetryCallback = Callable[[int, Exception | None, float], Any]
 
 # Context variables for global tracing
 _trace_hook: ContextVar[TraceHook | None] = ContextVar("trace_hook", default=None)
-_trace_config: ContextVar[TraceConfig] = ContextVar(
-    "trace_config", default=TraceConfig()
-)
+_trace_config: ContextVar[TraceConfig] = ContextVar("trace_config", default=TraceConfig())
 
 # Context variable for caching scope
 _cache_store: ContextVar[dict[str, tuple[bool, Any]] | None] = ContextVar(

@@ -66,9 +66,7 @@ class Combinator(ABC, Generic[T]):
         """a >> b = run b regardless of a's result (keep b's result)."""
         return _Then(self, other)
 
-    def if_else(
-        self, then_branch: Combinator[T], else_branch: Combinator[T]
-    ) -> Combinator[T]:
+    def if_else(self, then_branch: Combinator[T], else_branch: Combinator[T]) -> Combinator[T]:
         """
         Create a conditional: if self succeeds, run then_branch; else run else_branch.
 

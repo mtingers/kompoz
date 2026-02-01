@@ -245,9 +245,7 @@ def _traced_run_impl(
 
     try:
         if config.nested and is_composite:
-            ok, result = _traced_composite(
-                combinator, ctx, hook, config, depth, span, name, start
-            )
+            ok, result = _traced_composite(combinator, ctx, hook, config, depth, span, name, start)
         else:
             ok, result = combinator._execute(ctx)
             duration_ms = (time.perf_counter() - start) * 1000
@@ -278,9 +276,7 @@ def _traced_composite(
         children = _flatten_and_chain(combinator)
         current_ctx = ctx
         for child in children:
-            ok, current_ctx = _traced_run_impl(
-                child, current_ctx, hook, config, depth + 1
-            )
+            ok, current_ctx = _traced_run_impl(child, current_ctx, hook, config, depth + 1)
             if not ok:
                 duration_ms = (time.perf_counter() - start) * 1000
                 hook.on_exit(span, name, False, duration_ms, depth)
@@ -294,9 +290,7 @@ def _traced_composite(
         children = _flatten_or_chain(combinator)
         current_ctx = ctx
         for child in children:
-            ok, current_ctx = _traced_run_impl(
-                child, current_ctx, hook, config, depth + 1
-            )
+            ok, current_ctx = _traced_run_impl(child, current_ctx, hook, config, depth + 1)
             if ok:
                 duration_ms = (time.perf_counter() - start) * 1000
                 hook.on_exit(span, name, True, duration_ms, depth)
@@ -320,12 +314,8 @@ def _traced_composite(
         children = _flatten_then_chain(combinator)
         current_ctx = ctx
         for child in children[:-1]:
-            _, current_ctx = _traced_run_impl(
-                child, current_ctx, hook, config, depth + 1
-            )
-        ok, current_ctx = _traced_run_impl(
-            children[-1], current_ctx, hook, config, depth + 1
-        )
+            _, current_ctx = _traced_run_impl(child, current_ctx, hook, config, depth + 1)
+        ok, current_ctx = _traced_run_impl(children[-1], current_ctx, hook, config, depth + 1)
         duration_ms = (time.perf_counter() - start) * 1000
         hook.on_exit(span, name, ok, duration_ms, depth)
         return ok, current_ctx
@@ -351,9 +341,7 @@ def _traced_composite_no_span(
         children = _flatten_and_chain(combinator)
         current_ctx = ctx
         for child in children:
-            ok, current_ctx = _traced_run_impl(
-                child, current_ctx, hook, config, depth + 1
-            )
+            ok, current_ctx = _traced_run_impl(child, current_ctx, hook, config, depth + 1)
             if not ok:
                 return False, current_ctx
         return True, current_ctx
@@ -363,9 +351,7 @@ def _traced_composite_no_span(
         children = _flatten_or_chain(combinator)
         current_ctx = ctx
         for child in children:
-            ok, current_ctx = _traced_run_impl(
-                child, current_ctx, hook, config, depth + 1
-            )
+            ok, current_ctx = _traced_run_impl(child, current_ctx, hook, config, depth + 1)
             if ok:
                 return True, current_ctx
         return False, current_ctx
@@ -383,24 +369,16 @@ def _traced_composite_no_span(
         children = _flatten_then_chain(combinator)
         current_ctx = ctx
         for child in children[:-1]:
-            _, current_ctx = _traced_run_impl(
-                child, current_ctx, hook, config, depth + 1
-            )
+            _, current_ctx = _traced_run_impl(child, current_ctx, hook, config, depth + 1)
         return _traced_run_impl(children[-1], current_ctx, hook, config, depth + 1)
 
     # Handle IF/THEN/ELSE
     if isinstance(combinator, _IfThenElse):
-        cond_ok, new_ctx = _traced_run_impl(
-            combinator.condition, ctx, hook, config, depth + 1
-        )
+        cond_ok, new_ctx = _traced_run_impl(combinator.condition, ctx, hook, config, depth + 1)
         if cond_ok:
-            return _traced_run_impl(
-                combinator.then_branch, new_ctx, hook, config, depth + 1
-            )
+            return _traced_run_impl(combinator.then_branch, new_ctx, hook, config, depth + 1)
         else:
-            return _traced_run_impl(
-                combinator.else_branch, new_ctx, hook, config, depth + 1
-            )
+            return _traced_run_impl(combinator.else_branch, new_ctx, hook, config, depth + 1)
 
     # Fallback
     return combinator._execute(ctx)
@@ -486,9 +464,7 @@ class PrintHook:
             print(f"{prefix}-> {name}")
         return time.perf_counter()
 
-    def on_exit(
-        self, span: float, name: str, ok: bool, duration_ms: float, depth: int
-    ) -> None:
+    def on_exit(self, span: float, name: str, ok: bool, duration_ms: float, depth: int) -> None:
         prefix = self.indent * depth
         status = "✔" if ok else "✗"
         print(f"{prefix}<- {name} {status} ({duration_ms:.2f}ms)")
@@ -521,9 +497,7 @@ class LoggingHook:
         self.logger.log(self.level, f"[ENTER] {name} (depth={depth})")
         return span
 
-    def on_exit(
-        self, span: dict, name: str, ok: bool, duration_ms: float, depth: int
-    ) -> None:
+    def on_exit(self, span: dict, name: str, ok: bool, duration_ms: float, depth: int) -> None:
         status = "OK" if ok else "FAIL"
         self.logger.log(self.level, f"[EXIT] {name} -> {status} ({duration_ms:.2f}ms)")
 
@@ -561,8 +535,7 @@ class OpenTelemetryHook:
     ):
         if not _HAS_OPENTELEMETRY:
             raise ImportError(
-                "OpenTelemetry is not installed. "
-                "Install it with: pip install opentelemetry-api"
+                "OpenTelemetry is not installed. Install it with: pip install opentelemetry-api"
             )
         self.tracer = tracer
         self.max_span_depth = max_span_depth
@@ -856,9 +829,7 @@ def _explain_iterative(combinator: Combinator, verbose: bool) -> str:
             output_lines.append((depth, f"{indent}{bullet}Debug: {comb.label}"))
 
         elif isinstance(comb, Try):
-            output_lines.append(
-                (depth, f"{indent}{bullet}Try: {comb.name} (catch errors)")
-            )
+            output_lines.append((depth, f"{indent}{bullet}Try: {comb.name} (catch errors)"))
 
         # Retry
         elif isinstance(comb, Retry):
@@ -872,9 +843,7 @@ def _explain_iterative(combinator: Combinator, verbose: bool) -> str:
 
         # Temporal combinators
         elif isinstance(comb, during_hours):
-            end_type = (
-                "inclusive" if getattr(comb, "inclusive_end", False) else "exclusive"
-            )
+            end_type = "inclusive" if getattr(comb, "inclusive_end", False) else "exclusive"
             output_lines.append(
                 (
                     depth,
@@ -1018,9 +987,7 @@ def _explain_inline_iterative(combinator: Combinator) -> str:
     return result_parts[0] if result_parts else ""
 
 
-def _collect_chain(
-    combinator: Combinator, cls: type, left_attr: str, right_attr: str
-) -> list:
+def _collect_chain(combinator: Combinator, cls: type, left_attr: str, right_attr: str) -> list:
     """Collect chained combinators of the same type (iteratively)."""
     result: list[Combinator] = []
     stack: list[Combinator] = [combinator]

@@ -323,9 +323,7 @@ class TestAsyncValidatingComposition:
         combined = is_admin & is_active
         assert isinstance(combined, AsyncValidatingCombinator)
 
-        result = asyncio.run(
-            combined.validate(User("Bob", is_admin=False, is_active=False))
-        )
+        result = asyncio.run(combined.validate(User("Bob", is_admin=False, is_active=False)))
         assert not result.ok
         assert len(result.errors) == 2
 
@@ -339,9 +337,7 @@ class TestAsyncValidatingComposition:
             return u.is_active
 
         combined = is_admin | is_active
-        result = asyncio.run(
-            combined.validate(User("Alice", is_admin=False, is_active=True))
-        )
+        result = asyncio.run(combined.validate(User("Alice", is_admin=False, is_active=True)))
         assert result.ok
 
     def test_not_inverts(self):

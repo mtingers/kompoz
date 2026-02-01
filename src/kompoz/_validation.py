@@ -137,9 +137,7 @@ def _execute_validating_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]
         if isinstance(combinator, _ValidatingAnd):
             if phase == 0:
                 work_stack.append((combinator, current_ctx, 1, None))
-                if _is_validating_composite(combinator.left) or _is_composite(
-                    combinator.left
-                ):
+                if _is_validating_composite(combinator.left) or _is_composite(combinator.left):
                     work_stack.append((combinator.left, current_ctx, 0, None))
                 else:
                     ok, new_ctx = combinator.left._execute(current_ctx)
@@ -163,9 +161,7 @@ def _execute_validating_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]
         elif isinstance(combinator, _ValidatingOr):
             if phase == 0:
                 work_stack.append((combinator, current_ctx, 1, None))
-                if _is_validating_composite(combinator.left) or _is_composite(
-                    combinator.left
-                ):
+                if _is_validating_composite(combinator.left) or _is_composite(combinator.left):
                     work_stack.append((combinator.left, current_ctx, 0, None))
                 else:
                     ok, new_ctx = combinator.left._execute(current_ctx)
@@ -189,9 +185,7 @@ def _execute_validating_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]
         elif isinstance(combinator, _ValidatingNot):
             if phase == 0:
                 work_stack.append((combinator, current_ctx, 1, None))
-                if _is_validating_composite(combinator.inner) or _is_composite(
-                    combinator.inner
-                ):
+                if _is_validating_composite(combinator.inner) or _is_composite(combinator.inner):
                     work_stack.append((combinator.inner, current_ctx, 0, None))
                 else:
                     ok, new_ctx = combinator.inner._execute(current_ctx)
@@ -292,9 +286,7 @@ class _ValidatingOr(ValidatingCombinator[T]):
                     ctx=result_ctx,
                 )
 
-        return last_result or ValidationResult(
-            ok=False, errors=["No conditions to check"], ctx=ctx
-        )
+        return last_result or ValidationResult(ok=False, errors=["No conditions to check"], ctx=ctx)
 
 
 class _ValidatingNot(ValidatingCombinator[T]):
@@ -313,17 +305,13 @@ class _ValidatingNot(ValidatingCombinator[T]):
             inner_result = self.inner.validate(ctx)
             if inner_result.ok:
                 error_msg = self._error or "NOT condition failed (inner passed)"
-                return ValidationResult(
-                    ok=False, errors=[error_msg], ctx=inner_result.ctx
-                )
+                return ValidationResult(ok=False, errors=[error_msg], ctx=inner_result.ctx)
             else:
                 return ValidationResult(ok=True, errors=[], ctx=inner_result.ctx)
         else:
             ok, result = self.inner._execute(ctx)
             if ok:
-                error_msg = (
-                    self._error or f"NOT {_get_combinator_name(self.inner)} failed"
-                )
+                error_msg = self._error or f"NOT {_get_combinator_name(self.inner)} failed"
                 return ValidationResult(ok=False, errors=[error_msg], ctx=result)
             else:
                 return ValidationResult(ok=True, errors=[], ctx=result)
