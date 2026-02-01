@@ -93,7 +93,7 @@ class TestOnWeekdays:
     def test_weekday(self):
         w = on_weekdays()
         # Monday = 0
-        with patch("kompoz.datetime") as mock_dt:
+        with patch("kompoz._temporal.datetime") as mock_dt:
             mock_dt.now.return_value.weekday.return_value = 0
             ok, _ = w.run(None)
             assert ok
@@ -101,7 +101,7 @@ class TestOnWeekdays:
     def test_weekend(self):
         w = on_weekdays()
         # Saturday = 5
-        with patch("kompoz.datetime") as mock_dt:
+        with patch("kompoz._temporal.datetime") as mock_dt:
             mock_dt.now.return_value.weekday.return_value = 5
             ok, _ = w.run(None)
             assert not ok
@@ -113,14 +113,14 @@ class TestOnWeekdays:
 class TestOnDays:
     def test_matching_day(self):
         d = on_days(0, 2, 4)  # Mon, Wed, Fri
-        with patch("kompoz.datetime") as mock_dt:
+        with patch("kompoz._temporal.datetime") as mock_dt:
             mock_dt.now.return_value.weekday.return_value = 2  # Wednesday
             ok, _ = d.run(None)
             assert ok
 
     def test_non_matching_day(self):
         d = on_days(0, 2, 4)
-        with patch("kompoz.datetime") as mock_dt:
+        with patch("kompoz._temporal.datetime") as mock_dt:
             mock_dt.now.return_value.weekday.return_value = 1  # Tuesday
             ok, _ = d.run(None)
             assert not ok
@@ -136,21 +136,21 @@ class TestOnDays:
 class TestAfterDate:
     def test_after(self):
         a = after_date(2020, 1, 1)
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = a.run(None)
             assert ok
 
     def test_before(self):
         a = after_date(2030, 1, 1)
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = a.run(None)
             assert not ok
 
     def test_same_day(self):
         a = after_date(2025, 6, 1)
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = a.run(None)
             assert not ok  # after, not on
@@ -170,21 +170,21 @@ class TestAfterDate:
 class TestBeforeDate:
     def test_before(self):
         b = before_date(2030, 1, 1)
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = b.run(None)
             assert ok
 
     def test_after(self):
         b = before_date(2020, 1, 1)
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = b.run(None)
             assert not ok
 
     def test_same_day(self):
         b = before_date(2025, 6, 1)
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = b.run(None)
             assert not ok  # before, not on
@@ -200,35 +200,35 @@ class TestBeforeDate:
 class TestBetweenDates:
     def test_within_range(self):
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 15)
             ok, _ = b.run(None)
             assert ok
 
     def test_before_range(self):
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2024, 12, 31)
             ok, _ = b.run(None)
             assert not ok
 
     def test_after_range(self):
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2026, 1, 1)
             ok, _ = b.run(None)
             assert not ok
 
     def test_on_start_boundary(self):
         b = between_dates(date(2025, 6, 1), date(2025, 6, 30))
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 1)
             ok, _ = b.run(None)
             assert ok  # inclusive
 
     def test_on_end_boundary(self):
         b = between_dates(date(2025, 6, 1), date(2025, 6, 30))
-        with patch("kompoz.date") as mock_date:
+        with patch("kompoz._temporal.date") as mock_date:
             mock_date.today.return_value = date(2025, 6, 30)
             ok, _ = b.run(None)
             assert ok  # inclusive
