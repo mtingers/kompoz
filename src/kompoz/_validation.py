@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Generic, overload
-import inspect
+from typing import Any, overload
 
-from kompoz._core import Combinator, _And, _Or, _Not, _Then, _IfThenElse, _is_composite, _execute_iterative
+from kompoz._core import (
+    Combinator,
+    _execute_iterative,
+    _is_composite,
+)
 from kompoz._types import T
 
 
@@ -460,5 +464,3 @@ def vrule_args(
     if fn is not None:
         return decorator(fn)
     return decorator
-
-

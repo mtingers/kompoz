@@ -7,13 +7,12 @@ from collections.abc import Callable
 from typing import Any, Generic
 
 from kompoz._caching import CachedPredicate
-from kompoz._core import Combinator, _And, _Or, _Not, _Then, _IfThenElse
+from kompoz._core import Combinator, _IfThenElse
 from kompoz._predicate import Predicate, PredicateFactory
 from kompoz._retry import Retry
 from kompoz._transform import Transform, TransformFactory
 from kompoz._types import T, _cache_store
 from kompoz._utility import Always, Never
-
 
 # =============================================================================
 # Registry & Expression Parser

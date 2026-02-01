@@ -14,7 +14,6 @@ from kompoz._core import Combinator
 from kompoz._transform import Transform
 from kompoz._types import T
 
-
 # =============================================================================
 # Retry Result
 # =============================================================================
@@ -24,13 +23,14 @@ from kompoz._types import T
 class RetryResult(Generic[T]):
     """
     Result of a retry operation with detailed execution information.
-    
+
     Attributes:
         ok: Whether the operation ultimately succeeded
         ctx: The final context after execution
         attempts_made: Number of attempts made (1 = succeeded first try)
         last_error: The last exception encountered, if any
     """
+
     ok: bool
     ctx: T
     attempts_made: int
@@ -61,7 +61,7 @@ class Retry(Combinator[T]):
             print(f"Retry {attempt}: {error}, waiting {delay}s")
 
         fetch = Retry(fetch_from_api, max_attempts=3, on_retry=on_retry)
-        
+
         # Get detailed retry information
         result = fetch.run_with_info(ctx)
         print(f"Took {result.attempts_made} attempts")
@@ -98,7 +98,7 @@ class Retry(Combinator[T]):
         self.exponential = exponential
         self.jitter = jitter
         self.on_retry = on_retry
-        
+
         # Deprecated: these are kept for backwards compatibility but are
         # updated after each run. For concurrent usage, use run_with_info().
         self.last_error: Exception | None = None
@@ -122,10 +122,10 @@ class Retry(Combinator[T]):
     def run_with_info(self, ctx: T) -> RetryResult[T]:
         """
         Execute with detailed retry information.
-        
+
         This method is thread-safe and returns all execution metadata
         in the result object rather than storing it in instance variables.
-        
+
         Returns:
             RetryResult with ok, ctx, attempts_made, and last_error
         """
@@ -142,7 +142,7 @@ class Retry(Combinator[T]):
                         ok=True,
                         ctx=result,
                         attempts_made=attempts_made,
-                        last_error=None
+                        last_error=None,
                     )
                 last_ctx = result
                 last_error = None
@@ -162,10 +162,7 @@ class Retry(Combinator[T]):
                     time.sleep(delay)
 
         return RetryResult(
-            ok=False,
-            ctx=last_ctx,
-            attempts_made=attempts_made,
-            last_error=last_error
+            ok=False, ctx=last_ctx, attempts_made=attempts_made, last_error=last_error
         )
 
     def _execute(self, ctx: T) -> tuple[bool, T]:
@@ -195,7 +192,7 @@ class AsyncRetry(AsyncCombinator[T]):
             print(f"Retry {attempt}: {error}, waiting {delay}s")
 
         fetch = AsyncRetry(fetch_from_api, max_attempts=3, on_retry=on_retry)
-        
+
         # Get detailed retry information
         result = await fetch.run_with_info(ctx)
         print(f"Took {result.attempts_made} attempts")
@@ -232,7 +229,7 @@ class AsyncRetry(AsyncCombinator[T]):
         self.exponential = exponential
         self.jitter = jitter
         self.on_retry = on_retry
-        
+
         # Deprecated: these are kept for backwards compatibility but are
         # updated after each run. For concurrent usage, use run_with_info().
         self.last_error: Exception | None = None
@@ -256,10 +253,10 @@ class AsyncRetry(AsyncCombinator[T]):
     async def run_with_info(self, ctx: T) -> RetryResult[T]:
         """
         Execute with detailed retry information.
-        
+
         This method is concurrency-safe and returns all execution metadata
         in the result object rather than storing it in instance variables.
-        
+
         Returns:
             RetryResult with ok, ctx, attempts_made, and last_error
         """
@@ -276,7 +273,7 @@ class AsyncRetry(AsyncCombinator[T]):
                         ok=True,
                         ctx=result,
                         attempts_made=attempts_made,
-                        last_error=None
+                        last_error=None,
                     )
                 last_ctx = result
                 last_error = None
@@ -298,10 +295,7 @@ class AsyncRetry(AsyncCombinator[T]):
                     await asyncio.sleep(delay)
 
         return RetryResult(
-            ok=False,
-            ctx=last_ctx,
-            attempts_made=attempts_made,
-            last_error=last_error
+            ok=False, ctx=last_ctx, attempts_made=attempts_made, last_error=last_error
         )
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
@@ -313,5 +307,3 @@ class AsyncRetry(AsyncCombinator[T]):
 
     def __repr__(self) -> str:
         return f"AsyncRetry({self.name}, max_attempts={self.max_attempts})"
-
-

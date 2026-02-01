@@ -12,7 +12,6 @@ from kompoz._async import AsyncCombinator
 from kompoz._core import Combinator
 from kompoz._types import T, _cache_store
 
-
 # Thread-safe shared cache for multi-threaded scenarios
 _shared_cache: dict[str, tuple[bool, Any]] | None = None
 _shared_cache_lock = threading.Lock()
@@ -22,7 +21,7 @@ _shared_cache_lock = threading.Lock()
 def use_cache():
     """
     Context manager to enable caching for all cached rules in scope.
-    
+
     Note: This uses ContextVar which is per-thread. For multi-threaded
     scenarios where threads should share a cache, use use_cache_shared().
 
@@ -44,7 +43,7 @@ def use_cache():
 def use_cache_shared():
     """
     Context manager to enable a thread-safe shared cache.
-    
+
     Unlike use_cache() which uses ContextVar (per-thread), this creates
     a globally shared cache that's safe to use across multiple threads.
 
@@ -74,7 +73,7 @@ class CachedPredicate(Combinator[T]):
 
     The cache key is based on the predicate name and the context's id or hash.
     Thread-safe: uses locking to prevent duplicate execution in multi-threaded scenarios.
-    
+
     Cache lookup order:
     1. Thread-local cache (from use_cache())
     2. Shared cache (from use_cache_shared())
@@ -111,7 +110,7 @@ class CachedPredicate(Combinator[T]):
 
         if cache is not None:
             key = self._get_cache_key(ctx)
-            
+
             # Fast path: already cached (no lock needed for read)
             if key in cache:
                 return cache[key]
@@ -120,7 +119,7 @@ class CachedPredicate(Combinator[T]):
             with self._lock:
                 if key in cache:
                     return cache[key]
-                
+
                 result = self.fn(ctx), ctx
                 cache[key] = result
                 return result
@@ -236,7 +235,7 @@ class AsyncCachedPredicate(AsyncCombinator[T]):
 
         if cache is not None:
             key = self._get_cache_key(ctx)
-            
+
             # Fast path: already cached (no lock needed)
             if key in cache:
                 return cache[key]
@@ -324,5 +323,3 @@ def async_cached_rule(
     if fn is not None:
         return decorator(fn)
     return decorator
-
-

@@ -45,6 +45,7 @@ class TraceConfig:
     max_depth: int | None = None
     include_leaf_only: bool = False
 
+
 # Type aliases for callbacks
 RetryCallback = Callable[[int, Exception | None, float], None]
 """Callback signature for retry hooks: (attempt, error, delay) -> None"""

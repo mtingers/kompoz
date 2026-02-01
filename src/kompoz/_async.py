@@ -9,9 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Generic
 
-from kompoz._core import Combinator
 from kompoz._types import T, TraceConfig, TraceHook, _trace_config, _trace_hook
-
 
 # =============================================================================
 # Async Support
@@ -79,17 +77,17 @@ def _get_async_combinator_name(combinator: AsyncCombinator) -> str:
     # Lazy imports to avoid circular dependencies
     from kompoz._async_validation import (
         AsyncValidatingPredicate,
+        _AsyncParallelAnd,
+        _AsyncParallelOr,
+        _AsyncParallelValidatingAnd,
+        _AsyncParallelValidatingOr,
         _AsyncValidatingAnd,
         _AsyncValidatingNot,
         _AsyncValidatingOr,
-        _AsyncParallelAnd,
-        _AsyncParallelValidatingAnd,
-        _AsyncParallelOr,
-        _AsyncParallelValidatingOr,
     )
     from kompoz._caching import AsyncCachedPredicate
+    from kompoz._concurrency import AsyncCircuitBreaker, AsyncLimited, AsyncTimeout
     from kompoz._retry import AsyncRetry
-    from kompoz._concurrency import AsyncTimeout, AsyncLimited, AsyncCircuitBreaker
 
     # Check validating types before base types
     if isinstance(combinator, AsyncValidatingPredicate):
@@ -150,8 +148,8 @@ def _is_async_composite(combinator: AsyncCombinator) -> bool:
     """Check if combinator is a composite type for async tracing."""
     from kompoz._async_validation import (
         _AsyncParallelAnd,
-        _AsyncParallelValidatingAnd,
         _AsyncParallelOr,
+        _AsyncParallelValidatingAnd,
         _AsyncParallelValidatingOr,
     )
 
@@ -305,9 +303,7 @@ async def _async_traced_run_iterative(
             hook.on_exit(span, name, ok, duration_ms, depth)
             return ok, result
 
-        elif isinstance(
-            combinator, (_AsyncParallelAnd, _AsyncParallelValidatingAnd)
-        ):
+        elif isinstance(combinator, (_AsyncParallelAnd, _AsyncParallelValidatingAnd)):
             # Trace each child concurrently
             async def _trace_child(child: AsyncCombinator[T]) -> tuple[bool, T]:
                 return await process_node(child, current_ctx, depth + 1)
@@ -379,9 +375,8 @@ async def _async_traced_run_iterative(
             else:
                 return await process_node(combinator.else_branch, new_ctx, depth + 1)
 
-        elif isinstance(
-            combinator, (_AsyncParallelAnd, _AsyncParallelValidatingAnd)
-        ):
+        elif isinstance(combinator, (_AsyncParallelAnd, _AsyncParallelValidatingAnd)):
+
             async def _trace_child_no_span(
                 child: AsyncCombinator[T],
             ) -> tuple[bool, T]:
@@ -589,10 +584,10 @@ class AsyncTransform(AsyncCombinator[T]):
     async def run_with_error(self, ctx: T) -> tuple[bool, T, Exception | None]:
         """
         Execute the transform and return result with error information.
-        
+
         This method is concurrency-safe as it returns the error rather than
         storing it in an instance variable.
-        
+
         Returns:
             Tuple of (success, result_context, error_or_none)
         """
@@ -714,5 +709,3 @@ def async_if_then_else(
     explicitly branches based on the condition result.
     """
     return _AsyncIfThenElse(condition, then_branch, else_branch)
-
-

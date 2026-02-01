@@ -7,7 +7,6 @@ from datetime import date, datetime
 from kompoz._core import Combinator
 from kompoz._types import T
 
-
 # =============================================================================
 # Time-Based / Temporal Predicates
 # =============================================================================
@@ -248,5 +247,3 @@ class between_dates(Combinator[T]):
 
     def __repr__(self) -> str:
         return f"between_dates({self.start_date}, {self.end_date})"
-
-

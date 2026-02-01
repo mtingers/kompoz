@@ -131,40 +131,6 @@ __all__ = [
 ]
 
 # Core
-from kompoz._core import Combinator, if_then_else
-
-# Predicates
-from kompoz._predicate import (
-    Predicate,
-    PredicateFactory,
-    predicate,
-    predicate_factory,
-    rule,
-    rule_args,
-)
-
-# Transforms
-from kompoz._transform import (
-    Transform,
-    TransformFactory,
-    pipe,
-    pipe_args,
-    transform,
-    transform_factory,
-)
-
-# Utility combinators
-from kompoz._utility import Always, Debug, Never, Try
-
-# Validation
-from kompoz._validation import (
-    ValidationResult,
-    ValidatingCombinator,
-    ValidatingPredicate,
-    vrule,
-    vrule_args,
-)
-
 # Async
 from kompoz._async import (
     AsyncCombinator,
@@ -201,9 +167,6 @@ from kompoz._caching import (
     use_cache_shared,
 )
 
-# Retry
-from kompoz._retry import AsyncRetry, Retry, RetryResult
-
 # Concurrency utilities
 from kompoz._concurrency import (
     AsyncCircuitBreaker,
@@ -215,6 +178,23 @@ from kompoz._concurrency import (
     limited,
     with_timeout,
 )
+from kompoz._core import Combinator, if_then_else
+
+# Predicates
+from kompoz._predicate import (
+    Predicate,
+    PredicateFactory,
+    predicate,
+    predicate_factory,
+    rule,
+    rule_args,
+)
+
+# Registry and expression parsing
+from kompoz._registry import ExpressionParser, Registry, parse_expression
+
+# Retry
+from kompoz._retry import AsyncRetry, Retry, RetryResult
 
 # Temporal predicates
 from kompoz._temporal import (
@@ -239,5 +219,24 @@ from kompoz._tracing import (
     use_tracing,
 )
 
-# Registry and expression parsing
-from kompoz._registry import ExpressionParser, Registry, parse_expression
+# Transforms
+from kompoz._transform import (
+    Transform,
+    TransformFactory,
+    pipe,
+    pipe_args,
+    transform,
+    transform_factory,
+)
+
+# Utility combinators
+from kompoz._utility import Always, Debug, Never, Try
+
+# Validation
+from kompoz._validation import (
+    ValidatingCombinator,
+    ValidatingPredicate,
+    ValidationResult,
+    vrule,
+    vrule_args,
+)

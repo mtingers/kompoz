@@ -9,7 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from kompoz._async import AsyncCombinator, _async_traced_run
 from kompoz._caching import CachedPredicate
-from kompoz._core import Combinator, _And, _Or, _Not, _Then, _IfThenElse, _is_composite
+from kompoz._core import Combinator, _And, _IfThenElse, _Not, _Or, _Then
 from kompoz._predicate import Predicate
 from kompoz._retry import Retry
 from kompoz._temporal import (
@@ -28,7 +28,6 @@ from kompoz._validation import (
     _ValidatingAnd,
     _ValidatingNot,
     _ValidatingOr,
-    _is_validating_composite,
 )
 
 # Optional OpenTelemetry imports - only needed if using OpenTelemetryHook
@@ -1128,5 +1127,3 @@ def _collect_chain(
             result.append(c)
 
     return result
-
-
