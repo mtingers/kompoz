@@ -574,7 +574,7 @@ class _AsyncParallelOr(AsyncCombinator[T]):
 
                 for task in done:
                     try:
-                        ok, result = task.result()
+                        ok, _result = task.result()
                         if ok:
                             # Cancel remaining tasks and return success
                             for p in pending:

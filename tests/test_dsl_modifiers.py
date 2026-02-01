@@ -119,7 +119,7 @@ class TestModifierParser:
             parse_expression("rule:unknown(3)")
 
     def test_unknown_modifier_with_valid_name(self):
-        with pytest.raises(ValueError, match="Unknown modifier.*timeout"):
+        with pytest.raises(ValueError, match=r"Unknown modifier.*timeout"):
             parse_expression("rule:timeout(5)")
 
     def test_modifier_without_parens_for_retry(self):

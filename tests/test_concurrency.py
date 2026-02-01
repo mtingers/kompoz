@@ -170,7 +170,7 @@ class TestAsyncCircuitBreaker:
             return ctx > 0
 
         cb = circuit_breaker(check, failure_threshold=3)
-        ok, out = asyncio.run(cb.run(42))
+        ok, _out = asyncio.run(cb.run(42))
         assert ok is True
         assert cb.state == CircuitState.CLOSED
 

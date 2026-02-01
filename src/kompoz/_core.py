@@ -103,7 +103,7 @@ def _execute_iterative(root: Combinator[T], ctx: T) -> tuple[bool, T]:
     work_stack: list[tuple[Combinator[T], T, int, Any]] = [(root, ctx, 0, None)]
 
     while work_stack:
-        combinator, current_ctx, phase, saved_data = work_stack.pop()
+        combinator, current_ctx, phase, _saved_data = work_stack.pop()
 
         if isinstance(combinator, _And):
             if phase == 0:

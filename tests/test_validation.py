@@ -82,10 +82,10 @@ class TestVrule:
         def is_admin(u):
             return u.is_admin
 
-        ok, ctx = is_admin.run(User("Alice", is_admin=True))
+        ok, _ctx = is_admin.run(User("Alice", is_admin=True))
         assert ok
 
-        ok, ctx = is_admin.run(User("Bob"))
+        ok, _ctx = is_admin.run(User("Bob"))
         assert not ok
 
     def test_vrule_repr(self):

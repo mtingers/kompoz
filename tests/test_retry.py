@@ -308,7 +308,7 @@ class TestAsyncRetry:
             raise ValueError("nope")
 
         r = AsyncRetry(always_fail, max_attempts=3)
-        ok, result = asyncio.run(r.run(10))
+        ok, _result = asyncio.run(r.run(10))
         assert not ok
         assert r.attempts_made == 3
         # AsyncTransform catches exceptions internally, so last_error is None

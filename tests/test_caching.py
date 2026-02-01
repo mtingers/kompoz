@@ -129,7 +129,7 @@ class TestCachedPredicateFactory:
 
         with use_cache():
             ok1, _ = pred.run(15)
-            ok2, _ = pred.run(15)
+            _ok2, _ = pred.run(15)
 
         assert ok1 is True
         assert call_count == 1
@@ -306,7 +306,7 @@ class TestAsyncCachedPredicateFactory:
 
         with use_cache():
             ok1, _ = asyncio.run(pred.run(15))
-            ok2, _ = asyncio.run(pred.run(15))
+            _ok2, _ = asyncio.run(pred.run(15))
 
         assert ok1 is True
         assert call_count == 1

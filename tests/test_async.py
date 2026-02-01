@@ -45,7 +45,7 @@ class TestAsyncRule:
         async def is_positive(ctx):
             return ctx.value > 0
 
-        ok, result = asyncio.run(is_positive.run(Ctx(-1)))
+        ok, _result = asyncio.run(is_positive.run(Ctx(-1)))
         assert not ok
 
     def test_repr(self):
@@ -302,13 +302,13 @@ class TestAsyncIfThenElse:
             self.is_premium.if_else(self.apply_discount, self.full_price),
         )
 
-        ok, result = asyncio.run(outer.run(Ctx(600)))
+        _ok, result = asyncio.run(outer.run(Ctx(600)))
         assert result.label == "vip"
 
-        ok, result = asyncio.run(outer.run(Ctx(200)))
+        _ok, result = asyncio.run(outer.run(Ctx(200)))
         assert result.label == "discounted"
 
-        ok, result = asyncio.run(outer.run(Ctx(50)))
+        _ok, result = asyncio.run(outer.run(Ctx(50)))
         assert result.label == "full"
 
     def test_if_else_in_and_chain(self):

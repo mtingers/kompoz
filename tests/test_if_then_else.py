@@ -57,7 +57,7 @@ class TestIfElseMethod:
             return x
 
         cond = always_true.if_else(add_one, identity)
-        ok, result = cond.run(10)
+        _ok, result = cond.run(10)
         assert result == 11
 
     def test_nested_if_else(self):
