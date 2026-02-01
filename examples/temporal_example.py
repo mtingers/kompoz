@@ -65,13 +65,13 @@ trading_days = on_weekdays()
 maintenance_day = on_days(6)  # Sunday = 6
 
 # Feature launch date
-feature_launch = after_date(2024, 1, 1)
+feature_launch = after_date(2025, 1, 1)
 
 # Promotion period
-holiday_promo = between_dates(date(2024, 12, 20), date(2024, 12, 31))
+holiday_promo = between_dates(date(2025, 12, 20), date(2025, 12, 31))
 
 # Beta period ends
-beta_ends = before_date(2025, 6, 1)
+beta_ends = before_date(2026, 6, 1)
 
 
 # =============================================================================
@@ -130,8 +130,8 @@ if __name__ == "__main__":
         ("Extended hours (7-20)", extended_hours),
         ("Weekdays only", trading_days),
         ("Not maintenance day", system_available),
-        ("After 2024-01-01", feature_launch),
-        ("Before 2025-06-01", beta_ends),
+        ("After 2025-01-01", feature_launch),
+        ("Before 2026-06-01", beta_ends),
     ]
 
     for name, check in checks:
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print()
 
-    promo = Promotion("HOLIDAY2024", 0.20)
+    promo = Promotion("HOLIDAY2025", 0.20)
     ok, _ = holiday_promo.run(promo)
     print(f"Holiday promo active (Dec 20-31): {'✓ YES' if ok else '✗ NO'}")
 

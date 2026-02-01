@@ -84,9 +84,12 @@ def _get_async_combinator_name(combinator: AsyncCombinator) -> str:
         _AsyncValidatingOr,
         _AsyncParallelAnd,
         _AsyncParallelValidatingAnd,
+        _AsyncParallelOr,
+        _AsyncParallelValidatingOr,
     )
     from kompoz._caching import AsyncCachedPredicate
     from kompoz._retry import AsyncRetry
+    from kompoz._concurrency import AsyncTimeout, AsyncLimited, AsyncCircuitBreaker
 
     # Check validating types before base types
     if isinstance(combinator, AsyncValidatingPredicate):
@@ -119,6 +122,16 @@ def _get_async_combinator_name(combinator: AsyncCombinator) -> str:
         return "AsyncParallelAND"
     if isinstance(combinator, _AsyncParallelValidatingAnd):
         return "AsyncParallelValidatingAND"
+    if isinstance(combinator, _AsyncParallelOr):
+        return "AsyncParallelOR"
+    if isinstance(combinator, _AsyncParallelValidatingOr):
+        return "AsyncParallelValidatingOR"
+    if isinstance(combinator, AsyncTimeout):
+        return f"AsyncTimeout({combinator.timeout}s)"
+    if isinstance(combinator, AsyncLimited):
+        return f"AsyncLimited(max={combinator.max_concurrent})"
+    if isinstance(combinator, AsyncCircuitBreaker):
+        return f"AsyncCircuitBreaker(threshold={combinator.failure_threshold})"
     return repr(combinator)
 
 
@@ -135,7 +148,12 @@ async def _async_traced_run(
 
 def _is_async_composite(combinator: AsyncCombinator) -> bool:
     """Check if combinator is a composite type for async tracing."""
-    from kompoz._async_validation import _AsyncParallelAnd, _AsyncParallelValidatingAnd
+    from kompoz._async_validation import (
+        _AsyncParallelAnd,
+        _AsyncParallelValidatingAnd,
+        _AsyncParallelOr,
+        _AsyncParallelValidatingOr,
+    )
 
     return isinstance(
         combinator,
@@ -147,6 +165,8 @@ def _is_async_composite(combinator: AsyncCombinator) -> bool:
             _AsyncIfThenElse,
             _AsyncParallelAnd,
             _AsyncParallelValidatingAnd,
+            _AsyncParallelOr,
+            _AsyncParallelValidatingOr,
         ),
     )
 
@@ -550,23 +570,43 @@ class AsyncTransform(AsyncCombinator[T]):
             user.profile = await api.get_profile(user.id)
             return user
 
+    For concurrency-safe error access, use run_with_error() which returns
+    both the result and any error that occurred, rather than storing
+    the error in an instance variable.
+
     Attributes:
-        last_error: The last exception that caused failure (if any)
+        last_error: The last exception that caused failure (if any).
+                   Note: This is not concurrency-safe. For concurrent usage,
+                   use run_with_error() instead.
     """
 
     def __init__(self, fn: Callable[[T], Any], name: str | None = None):
         self.fn = fn
         self.name = name or getattr(fn, "__name__", "async_transform")
+        # Deprecated: kept for backwards compatibility but not concurrency-safe
         self.last_error: Exception | None = None
 
-    async def _execute(self, ctx: T) -> tuple[bool, T]:
+    async def run_with_error(self, ctx: T) -> tuple[bool, T, Exception | None]:
+        """
+        Execute the transform and return result with error information.
+        
+        This method is concurrency-safe as it returns the error rather than
+        storing it in an instance variable.
+        
+        Returns:
+            Tuple of (success, result_context, error_or_none)
+        """
         try:
             result = await self.fn(ctx)
-            self.last_error = None
-            return True, result
+            return True, result, None
         except Exception as e:
-            self.last_error = e
-            return False, ctx
+            return False, ctx, e
+
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        ok, result, error = await self.run_with_error(ctx)
+        # Update instance var for backwards compatibility (not concurrency-safe)
+        self.last_error = error
+        return ok, result
 
     def __repr__(self) -> str:
         return f"AsyncTransform({self.name})"

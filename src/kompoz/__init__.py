@@ -93,10 +93,12 @@ __all__ = [
     "async_vrule_args",
     # Parallel Async
     "parallel_and",
+    "parallel_or",
     # Caching
     "CachedPredicate",
     "CachedPredicateFactory",
     "use_cache",
+    "use_cache_shared",
     "cached_rule",
     "AsyncCachedPredicate",
     "AsyncCachedPredicateFactory",
@@ -104,6 +106,16 @@ __all__ = [
     # Retry
     "Retry",
     "AsyncRetry",
+    "RetryResult",
+    # Concurrency utilities
+    "AsyncTimeout",
+    "with_timeout",
+    "AsyncLimited",
+    "limited",
+    "AsyncCircuitBreaker",
+    "circuit_breaker",
+    "CircuitState",
+    "CircuitBreakerStats",
     # Temporal
     "during_hours",
     "on_weekdays",
@@ -174,6 +186,7 @@ from kompoz._async_validation import (
     async_vrule,
     async_vrule_args,
     parallel_and,
+    parallel_or,
 )
 
 # Caching
@@ -185,10 +198,23 @@ from kompoz._caching import (
     async_cached_rule,
     cached_rule,
     use_cache,
+    use_cache_shared,
 )
 
 # Retry
-from kompoz._retry import AsyncRetry, Retry
+from kompoz._retry import AsyncRetry, Retry, RetryResult
+
+# Concurrency utilities
+from kompoz._concurrency import (
+    AsyncCircuitBreaker,
+    AsyncLimited,
+    AsyncTimeout,
+    CircuitBreakerStats,
+    CircuitState,
+    circuit_breaker,
+    limited,
+    with_timeout,
+)
 
 # Temporal predicates
 from kompoz._temporal import (

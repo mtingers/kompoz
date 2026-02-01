@@ -360,14 +360,66 @@ class _AsyncParallelAnd(AsyncCombinator[T]):
 
     All children receive the **same original context** (not chained).
     Returns (all_ok, original_ctx).
+    
+    If fail_fast=True, cancels remaining tasks when first failure is detected.
     """
 
     children: list[AsyncCombinator[T]]
+    fail_fast: bool = False
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
+        if self.fail_fast:
+            return await self._execute_fail_fast(ctx)
+        return await self._execute_wait_all(ctx)
+
+    async def _execute_wait_all(self, ctx: T) -> tuple[bool, T]:
         results = await asyncio.gather(*(child._execute(ctx) for child in self.children))
         all_ok = all(ok for ok, _ in results)
         return all_ok, ctx
+
+    async def _execute_fail_fast(self, ctx: T) -> tuple[bool, T]:
+        """Execute with fail-fast: cancel remaining tasks on first failure."""
+        tasks = [
+            asyncio.create_task(child._execute(ctx))
+            for child in self.children
+        ]
+        
+        try:
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    try:
+                        ok, _ = task.result()
+                        if not ok:
+                            # Cancel remaining tasks and return failure
+                            for p in pending:
+                                p.cancel()
+                            # Wait for cancellations to complete
+                            if pending:
+                                await asyncio.gather(*pending, return_exceptions=True)
+                            return False, ctx
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        # On exception, cancel remaining and re-raise
+                        for p in pending:
+                            p.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        raise
+            
+            return True, ctx
+        except Exception:
+            # Ensure all tasks are cancelled on any exception
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            raise
 
 
 @dataclass
@@ -376,14 +428,62 @@ class _AsyncParallelValidatingAnd(AsyncValidatingCombinator[T]):
 
     All children receive the **same original context** (not chained).
     Merges error lists from all children.
+    
+    If fail_fast=True, cancels remaining tasks when first failure is detected.
     """
 
     children: list[AsyncCombinator[T]]
+    fail_fast: bool = False
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
+        if self.fail_fast:
+            return await self._execute_fail_fast(ctx)
+        return await self._execute_wait_all(ctx)
+
+    async def _execute_wait_all(self, ctx: T) -> tuple[bool, T]:
         results = await asyncio.gather(*(child._execute(ctx) for child in self.children))
         all_ok = all(ok for ok, _ in results)
         return all_ok, ctx
+
+    async def _execute_fail_fast(self, ctx: T) -> tuple[bool, T]:
+        """Execute with fail-fast: cancel remaining tasks on first failure."""
+        tasks = [
+            asyncio.create_task(child._execute(ctx))
+            for child in self.children
+        ]
+        
+        try:
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    try:
+                        ok, _ = task.result()
+                        if not ok:
+                            for p in pending:
+                                p.cancel()
+                            if pending:
+                                await asyncio.gather(*pending, return_exceptions=True)
+                            return False, ctx
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        for p in pending:
+                            p.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        raise
+            
+            return True, ctx
+        except Exception:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            raise
 
     async def validate(self, ctx: T) -> ValidationResult:
         """Validate all children concurrently and merge errors."""
@@ -407,7 +507,10 @@ class _AsyncParallelValidatingAnd(AsyncValidatingCombinator[T]):
         return ValidationResult(ok=len(errors) == 0, errors=errors, ctx=ctx)
 
 
-def parallel_and(*combinators: AsyncCombinator[T]) -> AsyncCombinator[T]:
+def parallel_and(
+    *combinators: AsyncCombinator[T],
+    fail_fast: bool = False,
+) -> AsyncCombinator[T]:
     """Create an async AND that runs all children concurrently.
 
     Unlike ``&`` which chains sequentially (and passes modified context from
@@ -419,18 +522,236 @@ def parallel_and(*combinators: AsyncCombinator[T]) -> AsyncCombinator[T]:
     If all inputs are ``AsyncValidatingCombinator``, returns a validating
     variant that merges error lists.
 
+    Args:
+        *combinators: Combinators to run in parallel
+        fail_fast: If True, cancel remaining tasks when first failure is detected.
+                   This can improve performance when you don't need all results.
+
     Raises ``ValueError`` when called with no arguments.
 
     Example::
 
         result = await parallel_and(check_a, check_b, check_c).run(ctx)
+        
+        # With fail-fast for early termination
+        result = await parallel_and(check_a, check_b, fail_fast=True).run(ctx)
     """
     if not combinators:
         raise ValueError("parallel_and() requires at least one combinator")
 
     children = list(combinators)
     if all(isinstance(c, AsyncValidatingCombinator) for c in children):
-        return _AsyncParallelValidatingAnd(children)
-    return _AsyncParallelAnd(children)
+        return _AsyncParallelValidatingAnd(children, fail_fast=fail_fast)
+    return _AsyncParallelAnd(children, fail_fast=fail_fast)
+
+
+# =============================================================================
+# Parallel Async OR
+# =============================================================================
+
+
+@dataclass
+class _AsyncParallelOr(AsyncCombinator[T]):
+    """Async OR that runs children concurrently, returns first success.
+
+    All children receive the **same original context** (not chained).
+    Returns (first_success, original_ctx) or (False, original_ctx) if all fail.
+    
+    If cancel_on_success=True (default), cancels remaining tasks when first
+    success is detected.
+    """
+
+    children: list[AsyncCombinator[T]]
+    cancel_on_success: bool = True
+
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        if self.cancel_on_success:
+            return await self._execute_with_cancel(ctx)
+        return await self._execute_wait_all(ctx)
+
+    async def _execute_with_cancel(self, ctx: T) -> tuple[bool, T]:
+        """Execute with cancellation: cancel remaining tasks on first success."""
+        tasks = [
+            asyncio.create_task(child._execute(ctx))
+            for child in self.children
+        ]
+        
+        try:
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    try:
+                        ok, result = task.result()
+                        if ok:
+                            # Cancel remaining tasks and return success
+                            for p in pending:
+                                p.cancel()
+                            if pending:
+                                await asyncio.gather(*pending, return_exceptions=True)
+                            return True, ctx
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        # Task raised exception, continue checking others
+                        pass
+            
+            # All tasks completed without success
+            return False, ctx
+        except Exception:
+            # Ensure all tasks are cancelled on any unexpected exception
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            raise
+
+    async def _execute_wait_all(self, ctx: T) -> tuple[bool, T]:
+        """Execute without cancellation: wait for all tasks."""
+        results = await asyncio.gather(
+            *(child._execute(ctx) for child in self.children),
+            return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, tuple):
+                ok, _ = result
+                if ok:
+                    return True, ctx
+        return False, ctx
+
+
+@dataclass
+class _AsyncParallelValidatingOr(AsyncValidatingCombinator[T]):
+    """Async validating OR that runs children concurrently.
+
+    Returns first success or collects all errors if none succeed.
+    """
+
+    children: list[AsyncCombinator[T]]
+    cancel_on_success: bool = True
+
+    async def _execute(self, ctx: T) -> tuple[bool, T]:
+        if self.cancel_on_success:
+            return await self._execute_with_cancel(ctx)
+        return await self._execute_wait_all(ctx)
+
+    async def _execute_with_cancel(self, ctx: T) -> tuple[bool, T]:
+        """Execute with cancellation on first success."""
+        tasks = [
+            asyncio.create_task(child._execute(ctx))
+            for child in self.children
+        ]
+        
+        try:
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    try:
+                        ok, _ = task.result()
+                        if ok:
+                            for p in pending:
+                                p.cancel()
+                            if pending:
+                                await asyncio.gather(*pending, return_exceptions=True)
+                            return True, ctx
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+            
+            return False, ctx
+        except Exception:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            raise
+
+    async def _execute_wait_all(self, ctx: T) -> tuple[bool, T]:
+        results = await asyncio.gather(
+            *(child._execute(ctx) for child in self.children),
+            return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, tuple):
+                ok, _ = result
+                if ok:
+                    return True, ctx
+        return False, ctx
+
+    async def validate(self, ctx: T) -> ValidationResult:
+        """Validate - passes if any succeeds, collects all errors if none do."""
+
+        async def _validate_one(child: AsyncCombinator[T]) -> tuple[bool, list[str]]:
+            if isinstance(child, AsyncValidatingCombinator):
+                result = await child.validate(ctx)
+                return result.ok, result.errors
+            else:
+                ok, _ = await child._execute(ctx)
+                if ok:
+                    return True, []
+                return False, [f"Check failed: {_get_async_combinator_name(child)}"]
+
+        results = await asyncio.gather(
+            *(_validate_one(child) for child in self.children)
+        )
+        
+        # If any succeeded, return success
+        for ok, _ in results:
+            if ok:
+                return ValidationResult(ok=True, errors=[], ctx=ctx)
+        
+        # All failed - collect all errors
+        all_errors: list[str] = []
+        for _, errors in results:
+            all_errors.extend(errors)
+        return ValidationResult(ok=False, errors=all_errors, ctx=ctx)
+
+
+def parallel_or(
+    *combinators: AsyncCombinator[T],
+    cancel_on_success: bool = True,
+) -> AsyncCombinator[T]:
+    """Create an async OR that runs all children concurrently, returns first success.
+
+    Unlike ``|`` which chains sequentially (trying each in order until one succeeds),
+    ``parallel_or`` runs every child concurrently and returns as soon as one succeeds.
+
+    All children receive the **same original context** (not chained).
+    Returns ``(True, original_ctx)`` on first success, or ``(False, original_ctx)``
+    if all fail.
+
+    If all inputs are ``AsyncValidatingCombinator``, returns a validating
+    variant that collects all errors if none succeed.
+
+    Args:
+        *combinators: Combinators to run in parallel
+        cancel_on_success: If True (default), cancel remaining tasks when first
+                          success is detected. Set to False to let all tasks complete.
+
+    Raises ``ValueError`` when called with no arguments.
+
+    Example::
+
+        # Try multiple data sources concurrently, use first success
+        result = await parallel_or(cache_lookup, db_lookup, api_lookup).run(ctx)
+        
+        # Wait for all to complete (useful for side effects)
+        result = await parallel_or(source_a, source_b, cancel_on_success=False).run(ctx)
+    """
+    if not combinators:
+        raise ValueError("parallel_or() requires at least one combinator")
+
+    children = list(combinators)
+    if all(isinstance(c, AsyncValidatingCombinator) for c in children):
+        return _AsyncParallelValidatingOr(children, cancel_on_success=cancel_on_success)
+    return _AsyncParallelOr(children, cancel_on_success=cancel_on_success)
 
 

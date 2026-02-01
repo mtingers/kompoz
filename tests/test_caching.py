@@ -369,3 +369,126 @@ class TestAsyncCacheWithComposition:
             assert ok
 
         assert cached_count == 1
+
+
+# =============================================================================
+# Concurrent Cache Access Tests
+# =============================================================================
+
+
+class TestConcurrentCacheAccess:
+    """Tests for thread-safe and async-safe cache access."""
+
+    def test_async_concurrent_cache_only_executes_once(self):
+        """Verify expensive function runs once even with concurrent access."""
+        call_count = 0
+
+        @async_cached_rule
+        async def expensive(ctx):
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.1)  # Simulate slow operation
+            return True
+
+        async def run_concurrent():
+            with use_cache():
+                # Run 10 concurrent executions with the same context
+                results = await asyncio.gather(*[
+                    expensive.run(42) for _ in range(10)
+                ])
+                return results
+
+        results = asyncio.run(run_concurrent())
+        
+        # Should only execute once due to locking
+        assert call_count == 1
+        assert all(ok for ok, _ in results)
+
+    def test_async_concurrent_different_keys_execute_separately(self):
+        """Different cache keys should execute separately."""
+        call_count = 0
+
+        @async_cached_rule
+        async def check(ctx):
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.05)
+            return ctx > 0
+
+        async def run_concurrent():
+            with use_cache():
+                # Run with different contexts (different cache keys)
+                results = await asyncio.gather(*[
+                    check.run(i) for i in range(5)
+                ])
+                return results
+
+        results = asyncio.run(run_concurrent())
+        
+        # Each unique context should execute once
+        assert call_count == 5
+
+    def test_async_concurrent_with_parallel_and(self):
+        """Test cache with parallel_and combinator."""
+        from kompoz import parallel_and
+
+        check_count = 0
+
+        @async_cached_rule
+        async def expensive_check(ctx):
+            nonlocal check_count
+            check_count += 1
+            await asyncio.sleep(0.1)
+            return ctx > 0
+
+        # parallel_and runs all children with same context
+        combo = parallel_and(expensive_check, expensive_check, expensive_check)
+
+        async def run_test():
+            with use_cache():
+                return await combo.run(42)
+
+        ok, _ = asyncio.run(run_test())
+        
+        assert ok is True
+        # All three children use same context, so cache should work
+        assert check_count == 1
+
+    def test_sync_thread_safe_cache(self):
+        """Test that sync CachedPredicate is thread-safe."""
+        import threading
+        
+        call_count = 0
+        lock = threading.Lock()
+
+        @cached_rule
+        def expensive(ctx):
+            nonlocal call_count
+            with lock:
+                call_count += 1
+            import time
+            time.sleep(0.05)  # Simulate slow operation
+            return ctx > 0
+
+        results = []
+        errors = []
+
+        def run_check():
+            try:
+                ok, _ = expensive.run(42)
+                results.append(ok)
+            except Exception as e:
+                errors.append(e)
+
+        with use_cache():
+            threads = [threading.Thread(target=run_check) for _ in range(10)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert len(errors) == 0
+        assert len(results) == 10
+        assert all(results)
+        # With thread-safe locking, should only execute once
+        assert call_count == 1

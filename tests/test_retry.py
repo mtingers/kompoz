@@ -12,10 +12,31 @@ from kompoz import (
     AsyncTransform,
     Predicate,
     Retry,
+    RetryResult,
     Transform,
     pipe,
     rule,
 )
+
+
+# ---------------------------------------------------------------------------
+# RetryResult Tests
+# ---------------------------------------------------------------------------
+
+
+class TestRetryResult:
+    def test_retry_result_fields(self):
+        result = RetryResult(ok=True, ctx=42, attempts_made=3, last_error=None)
+        assert result.ok is True
+        assert result.ctx == 42
+        assert result.attempts_made == 3
+        assert result.last_error is None
+
+    def test_retry_result_with_error(self):
+        error = ValueError("test error")
+        result = RetryResult(ok=False, ctx=42, attempts_made=5, last_error=error)
+        assert result.ok is False
+        assert result.last_error is error
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +202,81 @@ class TestRetry:
         assert not ok
         assert r.last_error is None
 
+    def test_run_with_info(self):
+        """Test run_with_info returns RetryResult with all metadata."""
+        attempts = 0
+
+        @pipe
+        def flaky(x):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise ValueError(f"fail {attempts}")
+            return x * 2
+
+        r = Retry(flaky, max_attempts=5)
+        result = r.run_with_info(10)
+
+        assert isinstance(result, RetryResult)
+        assert result.ok is True
+        assert result.ctx == 20
+        assert result.attempts_made == 3
+        assert result.last_error is None
+
+    def test_run_with_info_failure(self):
+        """Test run_with_info on complete failure."""
+
+        @rule
+        def always_raise(x):
+            raise ValueError("boom")
+
+        r = Retry(always_raise, max_attempts=3)
+        result = r.run_with_info(10)
+
+        assert result.ok is False
+        assert result.ctx == 10
+        assert result.attempts_made == 3
+        assert result.last_error is not None
+        assert str(result.last_error) == "boom"
+
+    def test_run_with_info_thread_safe(self):
+        """Test that run_with_info is thread-safe."""
+        import threading
+
+        attempts_per_thread = {}
+        results = []
+        errors = []
+
+        def flaky_fn(x):
+            thread_id = threading.current_thread().ident
+            if thread_id not in attempts_per_thread:
+                attempts_per_thread[thread_id] = 0
+            attempts_per_thread[thread_id] += 1
+            if attempts_per_thread[thread_id] < 2:
+                raise ValueError(f"fail {thread_id}")
+            return x * 2
+
+        r = Retry(flaky_fn, max_attempts=5)
+
+        def run_retry():
+            try:
+                result = r.run_with_info(10)
+                results.append(result)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=run_retry) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        assert len(results) == 5
+        # Each result should have its own independent attempt count
+        assert all(r.ok is True for r in results)
+        assert all(r.attempts_made == 2 for r in results)
+
 
 # ---------------------------------------------------------------------------
 # Async Retry
@@ -292,3 +388,59 @@ class TestAsyncRetry:
         r = AsyncRetry(lambda x: x, max_attempts=3, name="fetch")
         assert "fetch" in repr(r)
         assert "max_attempts=3" in repr(r)
+
+    def test_run_with_info(self):
+        """Test async run_with_info returns RetryResult."""
+        attempts = 0
+
+        async def flaky(x):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise ValueError(f"fail {attempts}")
+            return x * 2
+
+        r = AsyncRetry(flaky, max_attempts=5)
+        result = asyncio.run(r.run_with_info(10))
+
+        assert isinstance(result, RetryResult)
+        assert result.ok is True
+        assert result.ctx == 20
+        assert result.attempts_made == 3
+        assert result.last_error is None
+
+    def test_run_with_info_failure(self):
+        """Test async run_with_info on complete failure."""
+        from kompoz import async_rule
+
+        @async_rule
+        async def always_raise(x):
+            raise ValueError("boom")
+
+        r = AsyncRetry(always_raise, max_attempts=3)
+        result = asyncio.run(r.run_with_info(10))
+
+        assert result.ok is False
+        assert result.ctx == 10
+        assert result.attempts_made == 3
+        assert result.last_error is not None
+        assert str(result.last_error) == "boom"
+
+    def test_run_with_info_concurrent_isolated(self):
+        """Test that concurrent run_with_info calls have isolated state."""
+        r = AsyncRetry(
+            lambda x: x,  # Simple pass-through
+            max_attempts=5
+        )
+
+        async def run_many():
+            results = await asyncio.gather(*[
+                r.run_with_info(i) for i in range(10)
+            ])
+            return results
+
+        results = asyncio.run(run_many())
+        
+        # All should succeed with attempts_made = 1
+        assert all(res.ok is True for res in results)
+        assert all(res.attempts_made == 1 for res in results)
