@@ -5,19 +5,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock
 
-import pytest
-
 from kompoz import (
     AsyncRetry,
-    AsyncTransform,
-    Predicate,
     Retry,
     RetryResult,
-    Transform,
     pipe,
     rule,
 )
-
 
 # ---------------------------------------------------------------------------
 # RetryResult Tests
@@ -428,19 +422,20 @@ class TestAsyncRetry:
 
     def test_run_with_info_concurrent_isolated(self):
         """Test that concurrent run_with_info calls have isolated state."""
-        r = AsyncRetry(
-            lambda x: x,  # Simple pass-through
-            max_attempts=5
-        )
+        from kompoz import async_pipe
+
+        @async_pipe
+        async def pass_through(x):
+            return x
+
+        r = AsyncRetry(pass_through, max_attempts=5)
 
         async def run_many():
-            results = await asyncio.gather(*[
-                r.run_with_info(i) for i in range(10)
-            ])
+            results = await asyncio.gather(*[r.run_with_info(i) for i in range(10)])
             return results
 
         results = asyncio.run(run_many())
-        
+
         # All should succeed with attempts_made = 1
         assert all(res.ok is True for res in results)
         assert all(res.attempts_made == 1 for res in results)

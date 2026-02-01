@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from io import StringIO
 from unittest.mock import MagicMock
 
 from kompoz import (
     Always,
     Debug,
+    LoggingHook,
     Never,
+    PrintHook,
     Retry,
     TraceConfig,
     async_rule,
@@ -22,10 +22,7 @@ from kompoz import (
     run_async_traced,
     run_traced,
     use_tracing,
-    PrintHook,
-    LoggingHook,
 )
-
 
 # ---------------------------------------------------------------------------
 # explain()

@@ -5,8 +5,6 @@ from __future__ import annotations
 from kompoz import (
     Always,
     Never,
-    Predicate,
-    Transform,
     if_then_else,
     pipe,
     rule,

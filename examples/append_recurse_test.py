@@ -12,7 +12,6 @@ from opentelemetry import trace
 
 from kompoz import (
     PrintHook,
-    explain,
     rule,
     rule_args,
     use_tracing,

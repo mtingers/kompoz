@@ -455,8 +455,9 @@ class TestConcurrentCacheAccess:
         assert check_count == 1
 
     def test_sync_thread_safe_cache(self):
-        """Test that sync CachedPredicate is thread-safe."""
+        """Test that sync CachedPredicate is thread-safe with shared cache."""
         import threading
+        from kompoz import use_cache_shared
         
         call_count = 0
         lock = threading.Lock()
@@ -480,7 +481,9 @@ class TestConcurrentCacheAccess:
             except Exception as e:
                 errors.append(e)
 
-        with use_cache():
+        # Use use_cache_shared() for thread-safe caching across threads
+        # (use_cache() uses ContextVar which is per-thread)
+        with use_cache_shared():
             threads = [threading.Thread(target=run_check) for _ in range(10)]
             for t in threads:
                 t.start()

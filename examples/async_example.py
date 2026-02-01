@@ -165,7 +165,11 @@ async def flaky_check(user: User) -> bool:
 
 # Retry with exponential backoff
 resilient_check = AsyncRetry(
-    flaky_check & flaky_check, max_attempts=5, backoff=0.01, exponential=True, jitter=0.005
+    flaky_check & flaky_check,
+    max_attempts=5,
+    backoff=0.01,
+    exponential=True,
+    jitter=0.005,
 )
 
 
@@ -255,10 +259,20 @@ async def main():
     )
 
     checks = [
-        "is_verified", "is_premium", "has_permission(write)", "has_role(admin)",
-        "is_verified", "is_premium", "has_permission(write)", "has_role(admin)"
-        "is_verified", "is_premium", "has_permission(write)", "has_role(admin)"
-        "is_verified", "is_premium", "has_permission(write)", "has_role(admin)"
+        "is_verified",
+        "is_premium",
+        "has_permission(write)",
+        "has_role(admin)",
+        "is_verified",
+        "is_premium",
+        "has_permission(write)",
+        "has_role(admin)is_verified",
+        "is_premium",
+        "has_permission(write)",
+        "has_role(admin)is_verified",
+        "is_premium",
+        "has_permission(write)",
+        "has_role(admin)",
     ]
     for name, (ok, _) in zip(checks, results):
         status = "✓" if ok else "✗"

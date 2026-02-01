@@ -9,8 +9,6 @@ import pytest
 
 from kompoz import (
     AsyncValidatingCombinator,
-    AsyncValidatingPredicate,
-    ValidationResult,
     async_rule,
     async_vrule,
     parallel_and,

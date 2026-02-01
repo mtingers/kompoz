@@ -15,7 +15,6 @@ from kompoz import (
     parse_expression,
 )
 
-
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -82,15 +81,11 @@ class TestModifierParser:
 
     def test_modifier_in_and_chain(self):
         result = parse_expression("a & b:retry(3) & c")
-        assert result == {
-            "and": ["a", {"retry": {"inner": "b", "args": [3]}}, "c"]
-        }
+        assert result == {"and": ["a", {"retry": {"inner": "b", "args": [3]}}, "c"]}
 
     def test_modifier_in_or_chain(self):
         result = parse_expression("a | b:retry(3) | c")
-        assert result == {
-            "or": ["a", {"retry": {"inner": "b", "args": [3]}}, "c"]
-        }
+        assert result == {"or": ["a", {"retry": {"inner": "b", "args": [3]}}, "c"]}
 
     def test_complex_expression_with_modifier(self):
         result = parse_expression(
@@ -134,9 +129,7 @@ class TestModifierParser:
 
     def test_parameterized_rule_with_modifier(self):
         result = parse_expression("older_than(30):retry(3)")
-        assert result == {
-            "retry": {"inner": {"older_than": [30]}, "args": [3]}
-        }
+        assert result == {"retry": {"inner": {"older_than": [30]}, "args": [3]}}
 
 
 # =============================================================================
