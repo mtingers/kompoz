@@ -8,9 +8,6 @@ import time
 import pytest
 
 from kompoz import (
-    AsyncCircuitBreaker,
-    AsyncLimited,
-    AsyncTimeout,
     CircuitBreakerStats,
     CircuitState,
     async_rule,
@@ -21,7 +18,6 @@ from kompoz import (
     parallel_or,
     with_timeout,
 )
-
 
 # =============================================================================
 # Timeout Tests
@@ -215,13 +211,13 @@ class TestAsyncCircuitBreaker:
             await cb.run(1)
             await cb.run(1)
             assert cb.state == CircuitState.OPEN
-            
+
             # These should be rejected without calling the function
             initial_count = call_count
             for _ in range(5):
                 ok, _ = await cb.run(1)
                 assert ok is False
-            
+
             # No additional calls made
             assert call_count == initial_count
 
@@ -239,10 +235,10 @@ class TestAsyncCircuitBreaker:
             await cb.run(1)
             await cb.run(1)
             assert cb.state == CircuitState.OPEN
-            
+
             # Wait for recovery timeout
             await asyncio.sleep(0.1)
-            
+
             # Next call should transition to half-open
             await cb.run(1)
             # Since it failed, it goes back to open
@@ -265,7 +261,7 @@ class TestAsyncCircuitBreaker:
             sometimes_fail,
             failure_threshold=2,
             recovery_timeout=0.05,
-            half_open_max_calls=1
+            half_open_max_calls=1,
         )
 
         async def test():
@@ -273,10 +269,10 @@ class TestAsyncCircuitBreaker:
             await cb.run(1)
             await cb.run(1)
             assert cb.state == CircuitState.OPEN
-            
+
             # Wait for recovery timeout
             await asyncio.sleep(0.1)
-            
+
             # Next call should succeed and close circuit
             ok, _ = await cb.run(1)
             assert ok is True
@@ -295,9 +291,7 @@ class TestAsyncCircuitBreaker:
             return False
 
         cb = circuit_breaker(
-            failing_check,
-            failure_threshold=2,
-            on_state_change=on_change
+            failing_check, failure_threshold=2, on_state_change=on_change
         )
 
         async def test():
@@ -335,7 +329,7 @@ class TestAsyncCircuitBreaker:
             await cb.run(1)
             await cb.run(1)
             assert cb.state == CircuitState.OPEN
-            
+
             # Manual reset
             await cb.reset()
             assert cb.state == CircuitState.CLOSED
@@ -417,10 +411,10 @@ class TestParallelOr:
 
         combo = parallel_or(slow_check, fast_pass, cancel_on_success=True)
         asyncio.run(combo.run(1))
-        
+
         # Give time for slow task to complete if it wasn't cancelled
         asyncio.run(asyncio.sleep(0.3))
-        
+
         assert "fast" in completed
         # Slow task should have been cancelled
         assert "slow" not in completed
@@ -442,10 +436,10 @@ class TestParallelOr:
 
         combo = parallel_or(slow_check, fast_pass, cancel_on_success=False)
         ok, _ = asyncio.run(combo.run(1))
-        
+
         # Wait for slow task
         asyncio.run(asyncio.sleep(0.2))
-        
+
         assert ok is True
         assert "fast" in completed
         assert "slow" in completed
@@ -533,10 +527,10 @@ class TestParallelAndFailFast:
 
         combo = parallel_and(slow_pass, fast_fail, fail_fast=True)
         ok, _ = asyncio.run(combo.run(1))
-        
+
         # Give time for slow task to complete if it wasn't cancelled
         asyncio.run(asyncio.sleep(0.3))
-        
+
         assert ok is False
         assert "fast" in completed
         # Slow task should have been cancelled
@@ -577,7 +571,7 @@ class TestParallelAndFailFast:
 
         combo = parallel_and(slow_pass, fast_fail, fail_fast=False)
         ok, _ = asyncio.run(combo.run(1))
-        
+
         assert ok is False
         assert "fast" in completed
         assert "slow" in completed
@@ -591,7 +585,6 @@ class TestParallelAndFailFast:
 class TestConcurrencyIntegration:
     def test_timeout_with_retry(self):
         """Combine timeout with circuit breaker."""
-        from kompoz import AsyncRetry
 
         call_count = 0
 
@@ -604,8 +597,7 @@ class TestConcurrencyIntegration:
             return True
 
         protected = circuit_breaker(
-            with_timeout(flaky, timeout=0.1),
-            failure_threshold=5
+            with_timeout(flaky, timeout=0.1), failure_threshold=5
         )
 
         async def test():
