@@ -107,7 +107,7 @@ ok, _ = can_access.run(user)
 - **Parameterized Rules**: `account_older_than(30)` creates reusable predicates
 - **Validation with Errors**: `@vrule` / `@async_vrule` decorators collect all error messages
 - **Expression DSL**: Human-readable rule expressions with AND/OR/NOT/IF/THEN/ELSE
-- **Async Support**: Full async/await support with tracing and validation
+- **Async Support**: Full async/await support with tracing, validation, and parallel execution
 - **Caching**: `@cached_rule` and `use_cache()` to memoize expensive predicates
 - **Time-Based Rules**: `during_hours()`, `on_weekdays()`, `after_date()`, and more
 - **Error Tracking**: Transforms track exceptions via `last_error` attribute
@@ -926,6 +926,57 @@ if not ok:
     print(f"API error: {fetch_user_data.last_error}")
 ```
 
+### Parallel Execution
+
+Use `parallel_and()` to run multiple async checks concurrently instead of sequentially:
+
+```python
+from kompoz import parallel_and, async_rule
+
+@async_rule
+async def check_permissions(user):
+    return await db.check_permissions(user.id)
+
+@async_rule
+async def check_quota(user):
+    return await api.check_quota(user.id)
+
+@async_rule
+async def check_billing(user):
+    return await billing.is_active(user.id)
+
+# Sequential: runs one after another (~300ms if each takes 100ms)
+sequential = check_permissions & check_quota & check_billing
+
+# Parallel: runs all concurrently (~100ms total)
+parallel = parallel_and(check_permissions, check_quota, check_billing)
+
+ok, result = await parallel.run(user)
+```
+
+Key differences from `&`:
+- All children receive the **same original context** (not chained)
+- All checks run **concurrently** via `asyncio.gather()`
+- Returns `(all_ok, original_ctx)` — context is never modified
+- With `AsyncValidatingCombinator`, collects **all errors** concurrently
+
+```python
+from kompoz import parallel_and, async_vrule
+
+@async_vrule(error="No permission")
+async def check_permissions(user):
+    return await db.check_permissions(user.id)
+
+@async_vrule(error="Quota exceeded")
+async def check_quota(user):
+    return await api.check_quota(user.id)
+
+# Validates all concurrently, collects all errors
+checks = parallel_and(check_permissions, check_quota)
+result = await checks.validate(user)
+# result.errors might be ["No permission", "Quota exceeded"]
+```
+
 ## Caching / Memoization
 
 Avoid re-running expensive predicates:
@@ -946,6 +997,25 @@ with use_cache():
     rule.run(user)  # Executes
     rule.run(user)  # Uses cache
     rule.run(user)  # Uses cache
+```
+
+Async caching works the same way:
+
+```python
+from kompoz import async_cached_rule, use_cache
+
+@async_cached_rule
+async def fetch_permissions(user):
+    return await db.get_permissions(user.id)
+
+@async_cached_rule(key=lambda u: u.id)
+async def fetch_by_id(user):
+    return await api.fetch(user.id)
+
+# Cache works with async rules too
+with use_cache():
+    await rule.run(user)  # Executes
+    await rule.run(user)  # Uses cache
 ```
 
 ## Retry Logic
@@ -1094,6 +1164,7 @@ rule_docs = {
 - **`@async_vrule`**: Create an async validating rule with error message
 - **`@async_vrule_args`**: Create a parameterized async validating rule
 - **`@cached_rule`**: Create a rule with result caching
+- **`@async_cached_rule`**: Create an async rule with result caching
 
 ### Functions
 
@@ -1105,6 +1176,7 @@ rule_docs = {
 - **`run_traced(combinator, ctx, hook, config)`**: Run with explicit tracing
 - **`run_async_traced(combinator, ctx, hook, config)`**: Run async combinator with explicit tracing
 - **`use_cache()`**: Context manager to enable caching
+- **`parallel_and(*combinators)`**: Create async AND that runs all children concurrently
 
 ### Tracing Classes
 
@@ -1130,12 +1202,14 @@ rule_docs = {
 - **`AsyncTransform`**: Async transform. Has `last_error` attribute.
 - **`AsyncTransformFactory`**: Factory for parameterized async transforms
 - **`AsyncRetry`**: Async retry with backoff and observability hooks
+- **`parallel_and(*combinators)`**: Run multiple async combinators concurrently via `asyncio.gather()`
 
 ### Retry & Caching
 
 - **`Retry`**: Retry combinator with configurable backoff. Has `on_retry` callback, `last_error`, and `attempts_made` attributes.
 - **`AsyncRetry`**: Async retry with same features as `Retry`
 - **`CachedPredicate`**: Predicate with result caching
+- **`AsyncCachedPredicate`**: Async predicate with result caching
 
 ### Temporal Combinators
 
