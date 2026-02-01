@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Only support python >=3.13 (for now)
+
+## [0.2.3] - 2026-02-01
+
+### Changed
+
 - Replace mypy with pyright for type checking in Makefile, CI workflow, and pyproject.toml
 - Install opentelemetry extra during typecheck so pyright can resolve optional imports
 

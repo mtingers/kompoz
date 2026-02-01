@@ -1,11 +1,11 @@
 [project]
 name = "kompoz"
-version = "0.2.3"
+version = "0.2.4"
 description = "Composable predicate and transform combinators with operator overloading"
 license = "MIT"
 readme = "README.md"
 authors = [{ name = "Matth Ingersoll", email = "matth@mtingers.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 keywords = [
   "combinator",
   "predicate",
@@ -22,9 +22,6 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries :: Python Modules",
@@ -66,7 +63,7 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
@@ -77,10 +74,12 @@ ignore = [
     "RUF022", # __all__ is organized by category, not alphabetically
     "B039",   # mutable ContextVar default is intentional
     "SIM108", # use ternary
+    "UP046",  # Generic class `X` uses `Generic` subclass instead of type parameters,
+              # fix is Classname[T], but keeping for backwards compat
 ]
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.13"
 
 [tool.coverage.run]
 source = ["kompoz"]

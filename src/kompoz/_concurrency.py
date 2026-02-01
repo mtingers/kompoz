@@ -58,7 +58,7 @@ class AsyncTimeout(AsyncCombinator[T]):
             result = await asyncio.wait_for(self.inner._execute(ctx), timeout=self.timeout)
             self.timed_out = False
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.timed_out = True
             if self.on_timeout:
                 return False, self.on_timeout(ctx)
