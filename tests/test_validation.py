@@ -93,7 +93,7 @@ class TestVrule:
         def check(u):
             return True
 
-        assert "ValidatingPredicate(check)" == repr(check)
+        assert repr(check) == "ValidatingPredicate(check)"
 
 
 class TestVruleArgs:
@@ -274,7 +274,7 @@ class TestAsyncVrule:
         async def check(u):
             return True
 
-        assert "AsyncValidatingPredicate(check)" == repr(check)
+        assert repr(check) == "AsyncValidatingPredicate(check)"
 
 
 class TestAsyncVruleArgs:

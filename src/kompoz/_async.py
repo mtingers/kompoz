@@ -177,6 +177,10 @@ async def _async_traced_run_iterative(
     initial_depth: int = 0,
 ) -> tuple[bool, T]:
     """Execute async combinator tree with tracing using explicit work list."""
+    from kompoz._async_validation import (
+        _AsyncParallelAnd,
+        _AsyncParallelValidatingAnd,
+    )
 
     # For async, we use a work list approach but still need to await
     # We process the tree by flattening chains where possible

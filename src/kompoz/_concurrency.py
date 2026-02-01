@@ -357,9 +357,11 @@ class AsyncCircuitBreaker(AsyncCombinator[T], Generic[T]):
             if self._state == CircuitState.HALF_OPEN:
                 # Any failure in half-open immediately opens
                 await self._change_state(CircuitState.OPEN)
-            elif self._state == CircuitState.CLOSED:
-                if self._failure_count >= self.failure_threshold:
-                    await self._change_state(CircuitState.OPEN)
+            elif (
+                self._state == CircuitState.CLOSED
+                and self._failure_count >= self.failure_threshold
+            ):
+                await self._change_state(CircuitState.OPEN)
 
     async def _execute(self, ctx: T) -> tuple[bool, T]:
         # Check and potentially transition state

@@ -35,7 +35,7 @@ Example:
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Matth Ingersoll"
 __all__ = [
     # Core

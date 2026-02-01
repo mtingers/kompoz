@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from unittest.mock import MagicMock
 
 from kompoz import (
@@ -273,10 +274,8 @@ class TestLoggingHook:
             raise RuntimeError("kaboom")
 
         hook = LoggingHook(logger)
-        try:
+        with contextlib.suppress(RuntimeError):
             run_traced(boom, 1, hook)
-        except RuntimeError:
-            pass
 
         logger.error.assert_called()
         assert "kaboom" in str(logger.error.call_args)
@@ -306,7 +305,7 @@ class TestTraceConfig:
         # At max_depth=0, only the root AND is traced, children are not
         assert "AND" in output
         # Children should not appear as traced spans
-        lines = [l for l in output.strip().split("\n") if "Predicate" in l]
+        lines = [line for line in output.strip().split("\n") if "Predicate" in line]
         assert len(lines) == 0
 
     def test_include_leaf_only(self, capsys):
@@ -329,9 +328,9 @@ class TestTraceConfig:
         assert "Predicate(b)" in output
         # AND should not have its own span arrows
         and_lines = [
-            l
-            for l in output.strip().split("\n")
-            if "AND" in l and ("->" in l or "<-" in l)
+            line
+            for line in output.strip().split("\n")
+            if "AND" in line and ("->" in line or "<-" in line)
         ]
         assert len(and_lines) == 0
 

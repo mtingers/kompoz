@@ -1,6 +1,6 @@
 [project]
 name = "kompoz"
-version = "0.1.0"
+version = "0.2.0"
 description = "Composable predicate and transform combinators with operator overloading"
 license = "MIT"
 readme = "README.md"
@@ -32,13 +32,24 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/mtingers/kompoz"
+Repository = "https://github.com/mtingers/kompoz"
+Documentation = "https://github.com/mtingers/kompoz#readme"
+"Bug Tracker" = "https://github.com/mtingers/kompoz/issues"
+Changelog = "https://github.com/mtingers/kompoz/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 opentelemetry = [
     "opentelemetry-api>=1.39.1",
     "opentelemetry-exporter-otlp>=1.39.1",
     "opentelemetry-sdk>=1.39.1",
 ]
-dev = ["pytest-cov>=7.0.0"]
+dev = [
+    "pytest-cov>=7.0.0",
+    "mypy>=1.14",
+    "pre-commit>=4.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -49,8 +60,34 @@ line-length = 88
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "UP038",  # isinstance union syntax not supported at runtime in 3.10
+    "N801",   # lowercase class names are intentional (e.g. during_hours, on_weekdays)
+    "RUF022", # __all__ is organized by category, not alphabetically
+    "B039",   # mutable ContextVar default is intentional
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+check_untyped_defs = true
+show_error_codes = true
+
+[tool.coverage.run]
+source = ["kompoz"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 65
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+    "@overload",
+    "\\.\\.\\.",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

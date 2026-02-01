@@ -250,7 +250,12 @@ class AsyncCachedPredicate(AsyncCombinator[T]):
                 result_val = await self.fn(ctx)
                 result = bool(result_val), ctx
                 cache[key] = result
-                return result
+
+            # Clean up the per-key lock now that the value is cached
+            async with self._lock_lock:
+                self._locks.pop(key, None)
+
+            return result
 
         result_val = await self.fn(ctx)
         return bool(result_val), ctx

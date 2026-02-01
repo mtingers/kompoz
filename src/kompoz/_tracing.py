@@ -663,9 +663,11 @@ class OpenTelemetryHook:
     # -------------------------------------------------
 
     def on_enter(self, name: str, ctx: Any, depth: int) -> Any:
-        # These are guaranteed non-None because __init__ checks _HAS_OPENTELEMETRY
-        assert _set_span_in_context is not None
-        assert _Link is not None
+        if _set_span_in_context is None or _Link is None:
+            raise RuntimeError(
+                "OpenTelemetry is not available. This should not happen "
+                "because __init__ checks for it."
+            )
 
         # Depth-based suppression
         if self.max_span_depth is not None and depth > self.max_span_depth:
@@ -717,9 +719,11 @@ class OpenTelemetryHook:
         if span is None:
             return
 
-        # These are guaranteed non-None because __init__ checks _HAS_OPENTELEMETRY
-        assert _Status is not None
-        assert _StatusCode is not None
+        if _Status is None or _StatusCode is None:
+            raise RuntimeError(
+                "OpenTelemetry is not available. This should not happen "
+                "because __init__ checks for it."
+            )
 
         span.set_attribute("kompoz.success", ok)
         span.set_attribute("kompoz.duration_ms", duration_ms)
@@ -750,9 +754,11 @@ class OpenTelemetryHook:
         if span is None:
             return
 
-        # These are guaranteed non-None because __init__ checks _HAS_OPENTELEMETRY
-        assert _Status is not None
-        assert _StatusCode is not None
+        if _Status is None or _StatusCode is None:
+            raise RuntimeError(
+                "OpenTelemetry is not available. This should not happen "
+                "because __init__ checks for it."
+            )
 
         span.set_attribute("kompoz.success", False)
         span.set_attribute("kompoz.duration_ms", duration_ms)
@@ -852,10 +858,7 @@ def _explain_iterative(combinator: Combinator, verbose: bool) -> str:
 
         elif isinstance(comb, _ValidatingOr):
             children = _collect_chain(comb, _ValidatingOr, "left", "right")
-            if depth == 0:
-                header = "Validate ANY of:"
-            else:
-                header = f"{indent}{bullet}ANY of:"
+            header = "Validate ANY of:" if depth == 0 else f"{indent}{bullet}ANY of:"
             output_lines.append((depth, header))
             for child in reversed(children):
                 stack.append((child, depth + 1))
@@ -987,7 +990,7 @@ def _explain_iterative(combinator: Combinator, verbose: bool) -> str:
 
         # Fallback
         else:
-            output_lines.append((depth, f"{indent}{bullet}{repr(comb)}"))
+            output_lines.append((depth, f"{indent}{bullet}{comb!r}"))
 
     return "\n".join(line for _, line in output_lines)
 
@@ -1025,12 +1028,7 @@ def _explain_inline_iterative(combinator: Combinator) -> str:
                 stack.append((None, "prefix_not"))
                 stack.append((comb.inner, "process"))
             # Cached predicate
-            elif isinstance(comb, CachedPredicate):
-                result_parts.append(comb.name)
-            # Base types
-            elif isinstance(comb, Predicate):
-                result_parts.append(comb.name)
-            elif isinstance(comb, Transform):
+            elif isinstance(comb, (CachedPredicate, Predicate, Transform)):
                 result_parts.append(comb.name)
             elif isinstance(comb, _And):
                 children = _collect_chain(comb, _And, "left", "right")
@@ -1064,13 +1062,7 @@ def _explain_inline_iterative(combinator: Combinator) -> str:
                 result_parts.append(f"during_hours({comb.start_hour}, {comb.end_hour})")
             elif isinstance(comb, on_weekdays):
                 result_parts.append("on_weekdays()")
-            elif isinstance(comb, on_days):
-                result_parts.append(repr(comb))
-            elif isinstance(comb, after_date):
-                result_parts.append(repr(comb))
-            elif isinstance(comb, before_date):
-                result_parts.append(repr(comb))
-            elif isinstance(comb, between_dates):
+            elif isinstance(comb, (on_days, after_date, before_date, between_dates)):
                 result_parts.append(repr(comb))
             else:
                 result_parts.append(repr(comb))

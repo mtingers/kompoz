@@ -86,6 +86,13 @@ class Retry(Combinator[T]):
         name: str | None = None,
         on_retry: Callable[[int, Exception | None, float], None] | None = None,
     ):
+        if max_attempts < 1:
+            raise ValueError(f"max_attempts must be >= 1, got {max_attempts}")
+        if backoff < 0:
+            raise ValueError(f"backoff must be >= 0, got {backoff}")
+        if jitter < 0:
+            raise ValueError(f"jitter must be >= 0, got {jitter}")
+
         if isinstance(inner, Combinator):
             self.inner = inner
             self.name = name or repr(inner)
@@ -109,10 +116,7 @@ class Retry(Combinator[T]):
         if self.backoff <= 0:
             return 0
 
-        if self.exponential:
-            delay = self.backoff * (2**attempt)
-        else:
-            delay = self.backoff
+        delay = self.backoff * (2**attempt) if self.exponential else self.backoff
 
         if self.jitter > 0:
             delay += random.uniform(0, self.jitter)
@@ -217,6 +221,13 @@ class AsyncRetry(AsyncCombinator[T]):
         name: str | None = None,
         on_retry: Callable[[int, Exception | None, float], Any] | None = None,
     ):
+        if max_attempts < 1:
+            raise ValueError(f"max_attempts must be >= 1, got {max_attempts}")
+        if backoff < 0:
+            raise ValueError(f"backoff must be >= 0, got {backoff}")
+        if jitter < 0:
+            raise ValueError(f"jitter must be >= 0, got {jitter}")
+
         if isinstance(inner, AsyncCombinator):
             self.inner = inner
             self.name = name or repr(inner)
@@ -240,10 +251,7 @@ class AsyncRetry(AsyncCombinator[T]):
         if self.backoff <= 0:
             return 0
 
-        if self.exponential:
-            delay = self.backoff * (2**attempt)
-        else:
-            delay = self.backoff
+        delay = self.backoff * (2**attempt) if self.exponential else self.backoff
 
         if self.jitter > 0:
             delay += random.uniform(0, self.jitter)

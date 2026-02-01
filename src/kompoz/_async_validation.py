@@ -301,9 +301,8 @@ def async_vrule_args(
                     bound = sig.bind_partial(None, *args, **kwargs)
                     bound.apply_defaults()
                     params = dict(bound.arguments)
-                    first_param_name = list(sig.parameters.keys())[0]
-                    if first_param_name in params:
-                        del params[first_param_name]
+                    first_param_name = next(iter(sig.parameters.keys()))
+                    params.pop(first_param_name, None)
                     return params
                 except TypeError:
                     return kwargs

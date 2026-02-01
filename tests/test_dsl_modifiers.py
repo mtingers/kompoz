@@ -239,7 +239,7 @@ class TestModifierExecution:
     def test_complex_expression_with_retry(self, registry):
         self.fail_count[0] = 0
         rule = registry.load("""
-            is_positive 
+            is_positive
             & is_even:retry(2)
             & flaky:retry(5)
         """)

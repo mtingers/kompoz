@@ -117,15 +117,6 @@ class TestCachedPredicateFactory:
     def test_basic(self):
         call_count = 0
 
-        factory = CachedPredicateFactory(
-            lambda x, threshold: (
-                _inc_and_check(x, threshold, call_counter := {"n": 0}),
-            ),
-            "gt",
-        )
-        # Simpler approach:
-        call_count = 0
-
         def check_fn(x, threshold):
             nonlocal call_count
             call_count += 1
@@ -393,13 +384,11 @@ class TestConcurrentCacheAccess:
         async def run_concurrent():
             with use_cache():
                 # Run 10 concurrent executions with the same context
-                results = await asyncio.gather(*[
-                    expensive.run(42) for _ in range(10)
-                ])
+                results = await asyncio.gather(*[expensive.run(42) for _ in range(10)])
                 return results
 
         results = asyncio.run(run_concurrent())
-        
+
         # Should only execute once due to locking
         assert call_count == 1
         assert all(ok for ok, _ in results)
@@ -418,13 +407,11 @@ class TestConcurrentCacheAccess:
         async def run_concurrent():
             with use_cache():
                 # Run with different contexts (different cache keys)
-                results = await asyncio.gather(*[
-                    check.run(i) for i in range(5)
-                ])
+                results = await asyncio.gather(*[check.run(i) for i in range(5)])
                 return results
 
-        results = asyncio.run(run_concurrent())
-        
+        asyncio.run(run_concurrent())
+
         # Each unique context should execute once
         assert call_count == 5
 
@@ -449,7 +436,7 @@ class TestConcurrentCacheAccess:
                 return await combo.run(42)
 
         ok, _ = asyncio.run(run_test())
-        
+
         assert ok is True
         # All three children use same context, so cache should work
         assert check_count == 1
@@ -457,8 +444,9 @@ class TestConcurrentCacheAccess:
     def test_sync_thread_safe_cache(self):
         """Test that sync CachedPredicate is thread-safe with shared cache."""
         import threading
+
         from kompoz import use_cache_shared
-        
+
         call_count = 0
         lock = threading.Lock()
 
@@ -468,6 +456,7 @@ class TestConcurrentCacheAccess:
             with lock:
                 call_count += 1
             import time
+
             time.sleep(0.05)  # Simulate slow operation
             return ctx > 0
 

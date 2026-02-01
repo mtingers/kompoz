@@ -19,7 +19,7 @@ from kompoz._types import T
 def _get_combinator_name(combinator: Combinator) -> str:
     """Get a human-readable name for a combinator (simple version for validation)."""
     if hasattr(combinator, "name"):
-        return getattr(combinator, "name")
+        return combinator.name
     return repr(combinator)
 
 
@@ -408,9 +408,8 @@ def vrule_args(
                     bound.apply_defaults()
                     # Remove the first argument (the context placeholder)
                     params = dict(bound.arguments)
-                    first_param_name = list(sig.parameters.keys())[0]
-                    if first_param_name in params:
-                        del params[first_param_name]
+                    first_param_name = next(iter(sig.parameters.keys()))
+                    params.pop(first_param_name, None)
                     return params
                 except TypeError:
                     # Fallback if binding fails

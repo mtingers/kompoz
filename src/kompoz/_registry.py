@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Generic
+from typing import Any, ClassVar, Generic
 
 from kompoz._caching import CachedPredicate
 from kompoz._core import Combinator, _IfThenElse
@@ -103,7 +103,7 @@ class ExpressionParser:
     EOF = "EOF"
 
     # Reserved modifier keywords
-    MODIFIERS = {"retry", "cached"}
+    MODIFIERS: ClassVar[set[str]] = {"retry", "cached"}
 
     def __init__(self, text: str):
         self.text = text
@@ -516,7 +516,7 @@ class _CachedCombinatorWrapper(Combinator[T]):
     The cache is keyed by object id and is shared across all instances.
     """
 
-    _cache: dict[int, tuple[bool, Any]] = {}
+    _cache: ClassVar[dict[int, tuple[bool, Any]]] = {}
 
     def __init__(self, inner: Combinator[T]):
         self.inner = inner
@@ -714,6 +714,15 @@ class Registry(Generic[T]):
                 backoff = float(args[1]) if len(args) > 1 else 0.0
                 exponential = bool(args[2]) if len(args) > 2 else False
                 jitter = float(args[3]) if len(args) > 3 else 0.0
+
+                if max_attempts < 1:
+                    raise ValueError(
+                        f"retry max_attempts must be >= 1, got {max_attempts}"
+                    )
+                if backoff < 0:
+                    raise ValueError(f"retry backoff must be >= 0, got {backoff}")
+                if jitter < 0:
+                    raise ValueError(f"retry jitter must be >= 0, got {jitter}")
 
                 return Retry(
                     inner,
