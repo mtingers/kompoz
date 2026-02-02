@@ -41,6 +41,7 @@
   - [Caching / Memoization](#caching-memoization)
   - [Retry Logic](#retry-logic)
     - [Observability Hooks](#observability-hooks)
+  - [Thread Safety](#thread-safety)
   - [Time-Based Rules](#time-based-rules)
   - [Equality and Hashing](#equality-and-hashing)
   - [API Reference](#api-reference)
@@ -274,6 +275,20 @@ ok, result = await fetch_data.run("https://api.example.com")
 if not ok:
     print(f"Request failed: {fetch_data.last_error}")
 ```
+
+#### Thread-safe alternative: `run_with_error()`
+
+The `last_error` attribute is mutated on each call, which is not safe when the same
+transform instance is used from multiple threads or async tasks. Use `run_with_error()`
+instead — it returns the error in the result tuple without mutating the instance:
+
+```python
+ok, result, error = risky_transform.run_with_error("not a number")
+if not ok:
+    print(f"Failed: {error}")
+```
+
+> **Note:** `run_with_error()` is available on both `Transform` and `AsyncTransform`.
 
 ## Expression DSL
 
@@ -1066,6 +1081,19 @@ print(f"Total attempts: {fetch.attempts_made}")
 print(f"Last error: {fetch.last_error}")
 ```
 
+#### Thread-safe alternative: `run_with_info()`
+
+Like `last_error` on transforms, the `attempts_made` and `last_error` attributes on
+`Retry` / `AsyncRetry` are mutated on each call. Use `run_with_info()` for a pure
+alternative that returns all metadata in a `RetryResult`:
+
+```python
+info = fetch.run_with_info(request)
+print(f"ok={info.ok}, attempts={info.attempts_made}, error={info.last_error}")
+```
+
+> **Note:** `run_with_info()` is available on both `Retry` and `AsyncRetry`.
+
 For async retries, the callback can be sync or async:
 
 ```python
@@ -1077,6 +1105,33 @@ fetch = AsyncRetry(
     max_attempts=3,
     on_retry=on_retry_async  # Async callback supported
 )
+```
+
+## Thread Safety
+
+Kompoz combinators are lightweight and mostly stateless, but a few attributes are
+mutated during execution. If you share a combinator instance across threads or async
+tasks, use the pure alternatives listed below.
+
+| Mutable attribute | On class | Pure alternative |
+| --- | --- | --- |
+| `last_error` | `Transform` / `AsyncTransform` | `run_with_error()` → `(ok, ctx, error)` |
+| `last_error` | `Retry` / `AsyncRetry` | `run_with_info()` → `RetryResult` |
+| `attempts_made` | `Retry` / `AsyncRetry` | `run_with_info()` → `RetryResult` |
+
+**Context mutation in OR chains.** When transforms are combined with `|`, the
+left-hand side may modify the context *before* the right-hand side sees it. If your
+context is a mutable object (e.g. a dataclass), the fallback branch receives the
+already-mutated value. To avoid surprises, return new objects from each transform
+rather than mutating in place:
+
+```python
+from dataclasses import replace
+
+@pipe
+def enrich(user: User) -> User:
+    # Safe: returns a new object instead of mutating
+    return replace(user, enriched=True)
 ```
 
 ## Time-Based Rules
@@ -1143,7 +1198,7 @@ rule_docs = {
 - **`Combinator[T]`**: Abstract base class for all combinators. Has `.if_else(then, else)` method.
 - **`Predicate[T]`**: Checks a condition, doesn't modify context. Supports `__eq__` and `__hash__`.
 - **`PredicateFactory[T]`**: Factory for parameterized predicates (created by `@rule_args`)
-- **`Transform[T]`**: Transforms context, fails on exception. Has `last_error` attribute. Supports `__eq__` and `__hash__`.
+- **`Transform[T]`**: Transforms context, fails on exception. Has `last_error` attribute and `run_with_error()` for thread-safe error access. Supports `__eq__` and `__hash__`.
 - **`TransformFactory[T]`**: Factory for parameterized transforms (created by `@pipe_args`)
 - **`Try[T]`**: Wraps a function, converts exceptions to failure
 - **`Registry[T]`**: Register and load rules from expressions
@@ -1199,15 +1254,15 @@ rule_docs = {
 - **`AsyncCombinator`**: Base class for async combinators. Has `.if_else(then, else)` method. Integrates with `use_tracing()`.
 - **`AsyncPredicate`**: Async predicate
 - **`AsyncPredicateFactory`**: Factory for parameterized async predicates
-- **`AsyncTransform`**: Async transform. Has `last_error` attribute.
+- **`AsyncTransform`**: Async transform. Has `last_error` attribute and `run_with_error()` for concurrency-safe error access.
 - **`AsyncTransformFactory`**: Factory for parameterized async transforms
 - **`AsyncRetry`**: Async retry with backoff and observability hooks
 - **`parallel_and(*combinators)`**: Run multiple async combinators concurrently via `asyncio.gather()`
 
 ### Retry & Caching
 
-- **`Retry`**: Retry combinator with configurable backoff. Has `on_retry` callback, `last_error`, and `attempts_made` attributes.
-- **`AsyncRetry`**: Async retry with same features as `Retry`
+- **`Retry`**: Retry combinator with configurable backoff. Has `on_retry` callback, `last_error`, and `attempts_made` attributes. Use `run_with_info()` for thread-safe access to retry metadata.
+- **`AsyncRetry`**: Async retry with same features as `Retry`. Use `run_with_info()` for concurrency-safe access to retry metadata.
 - **`CachedPredicate`**: Predicate with result caching
 - **`AsyncCachedPredicate`**: Async predicate with result caching
 

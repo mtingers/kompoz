@@ -213,6 +213,38 @@ class TestTransform:
 
         assert "process" in repr(process)
 
+    def test_run_with_error_success(self) -> None:
+        double: Transform[int] = Transform(lambda x: x * 2, "double")
+        ok, result, error = double.run_with_error(5)
+        assert ok is True
+        assert result == 10
+        assert error is None
+
+    def test_run_with_error_failure(self) -> None:
+        @pipe
+        def blow_up(x: int) -> int:
+            raise ValueError("boom")
+
+        ok, result, error = blow_up.run_with_error(42)
+        assert ok is False
+        assert result == 42
+        assert isinstance(error, ValueError)
+        assert str(error) == "boom"
+
+    def test_run_with_error_does_not_mutate_self(self) -> None:
+        @pipe
+        def blow_up(x: int) -> int:
+            raise ValueError("boom")
+
+        # Set last_error to a sentinel value
+        blow_up.last_error = None
+
+        ok, _result, error = blow_up.run_with_error(1)
+        assert ok is False
+        assert isinstance(error, ValueError)
+        # last_error should be unchanged — run_with_error is pure
+        assert blow_up.last_error is None
+
 
 # =============================================================================
 # Operator Tests

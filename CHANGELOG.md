@@ -5,7 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.3] - 2026-02-01
+## [0.3.0] - 2026-02-01
+
+### Added
+
+- `Transform.run_with_error()` method for thread-safe error access (mirrors `AsyncTransform.run_with_error()`)
+- Thread Safety section in README documenting mutable attributes vs pure alternatives
+- README docs for `run_with_error()` in Error Tracking section and `run_with_info()` in Retry Observability section
+- API Reference entries updated for `Transform`, `AsyncTransform`, `Retry`, and `AsyncRetry` thread-safe methods
+
+### Changed
+
+- `Transform._execute()` now delegates to `run_with_error()` internally (backwards compatible)
+
+## [0.2.5] - 2026-02-01
 
 ### Changed
 

@@ -19,8 +19,14 @@ class Transform(Combinator[T]):
         double: Transform[int] = Transform(lambda x: x * 2, "double")
         ok, result = double.run(5)  # (True, 10)
 
+    For thread-safe error access, use run_with_error() which returns
+    both the result and any error that occurred, rather than storing
+    the error in an instance variable.
+
     Attributes:
-        last_error: The last exception that caused failure (if any)
+        last_error: The last exception that caused failure (if any).
+                   Note: This is not thread-safe. For concurrent usage,
+                   use run_with_error() instead.
     """
 
     def __init__(self, fn: Callable[[T], T], name: str | None = None):
@@ -28,14 +34,27 @@ class Transform(Combinator[T]):
         self.name = name or getattr(fn, "__name__", "transform")
         self.last_error: Exception | None = None
 
-    def _execute(self, ctx: T) -> tuple[bool, T]:
+    def run_with_error(self, ctx: T) -> tuple[bool, T, Exception | None]:
+        """
+        Execute the transform and return result with error information.
+
+        This method is thread-safe as it returns the error rather than
+        storing it in an instance variable.
+
+        Returns:
+            Tuple of (success, result_context, error_or_none)
+        """
         try:
             result = self.fn(ctx)
-            self.last_error = None
-            return True, result
+            return True, result, None
         except Exception as e:
-            self.last_error = e
-            return False, ctx
+            return False, ctx, e
+
+    def _execute(self, ctx: T) -> tuple[bool, T]:
+        ok, result, error = self.run_with_error(ctx)
+        # Update instance var for backwards compatibility (not thread-safe)
+        self.last_error = error
+        return ok, result
 
     def __repr__(self) -> str:
         return f"Transform({self.name})"
