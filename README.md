@@ -64,6 +64,8 @@
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+**Read more at the [docs site](https://mtingers.github.io/kompoz/)**
+
 Kompoz lets you build complex validation rules and data pipelines using intuitive Python operators. Instead of nested `if/else` statements, write declarative, composable logic:
 
 ```python
@@ -183,13 +185,13 @@ print(f"Access: {'granted' if ok else 'denied'}")
 
 ## Operators
 
-| Operator                | Meaning    | Behavior                                   |
-| ----------------------- | ---------- | ------------------------------------------ |
-| `a & b`                 | AND / then | Run `b` only if `a` succeeds               |
-| `a \| b`                | OR / else  | Run `b` only if `a` fails                  |
-| `~a`                    | NOT        | Invert success/failure                     |
-| `a >> b`                | THEN       | Always run both, keep `b`'s result         |
-| `a.if_else(b, c)`       | IF/ELSE    | If `a` succeeds run `b`, otherwise run `c` |
+| Operator          | Meaning    | Behavior                                   |
+| ----------------- | ---------- | ------------------------------------------ |
+| `a & b`           | AND / then | Run `b` only if `a` succeeds               |
+| `a \| b`          | OR / else  | Run `b` only if `a` fails                  |
+| `~a`              | NOT        | Invert success/failure                     |
+| `a >> b`          | THEN       | Always run both, keep `b`'s result         |
+| `a.if_else(b, c)` | IF/ELSE    | If `a` succeeds run `b`, otherwise run `c` |
 
 The `>>` operator is useful for pipelines where you want to run steps unconditionally:
 
@@ -335,15 +337,14 @@ loaded = reg.load("is_admin AND is_active")  # same thing
 
 Both symbol and word syntax are supported:
 
-| Symbol          | Word             | Meaning                             |
-| --------------- | ---------------- | ----------------------------------- |
-| `&`             | `AND`            | All conditions must pass            |
-| `\|`            | `OR`             | Any condition must pass             |
-| `~`, `!`        | `NOT`            | Invert the condition                |
-| `>>`            | `THEN`           | Always run both, keep second result |
-| `a ? b : c`     | `IF a THEN b ELSE c` | Conditional branching          |
-| `()`            |                  | Grouping                            |
-
+| Symbol      | Word                 | Meaning                             |
+| ----------- | -------------------- | ----------------------------------- |
+| `&`         | `AND`                | All conditions must pass            |
+| `\|`        | `OR`                 | Any condition must pass             |
+| `~`, `!`    | `NOT`                | Invert the condition                |
+| `>>`        | `THEN`               | Always run both, keep second result |
+| `a ? b : c` | `IF a THEN b ELSE c` | Conditional branching               |
+| `()`        |                      | Grouping                            |
 
 ### Modifiers
 
@@ -970,6 +971,7 @@ ok, result = await parallel.run(user)
 ```
 
 Key differences from `&`:
+
 - All children receive the **same original context** (not chained)
 - All checks run **concurrently** via `asyncio.gather()`
 - Returns `(all_ok, original_ctx)` — context is never modified
@@ -1113,14 +1115,14 @@ Kompoz combinators are lightweight and mostly stateless, but a few attributes ar
 mutated during execution. If you share a combinator instance across threads or async
 tasks, use the pure alternatives listed below.
 
-| Mutable attribute | On class | Pure alternative |
-| --- | --- | --- |
-| `last_error` | `Transform` / `AsyncTransform` | `run_with_error()` → `(ok, ctx, error)` |
-| `last_error` | `Retry` / `AsyncRetry` | `run_with_info()` → `RetryResult` |
-| `attempts_made` | `Retry` / `AsyncRetry` | `run_with_info()` → `RetryResult` |
+| Mutable attribute | On class                       | Pure alternative                        |
+| ----------------- | ------------------------------ | --------------------------------------- |
+| `last_error`      | `Transform` / `AsyncTransform` | `run_with_error()` → `(ok, ctx, error)` |
+| `last_error`      | `Retry` / `AsyncRetry`         | `run_with_info()` → `RetryResult`       |
+| `attempts_made`   | `Retry` / `AsyncRetry`         | `run_with_info()` → `RetryResult`       |
 
 **Context mutation in OR chains.** When transforms are combined with `|`, the
-left-hand side may modify the context *before* the right-hand side sees it. If your
+left-hand side may modify the context _before_ the right-hand side sees it. If your
 context is a mutable object (e.g. a dataclass), the fallback branch receives the
 already-mutated value. To avoid surprises, return new objects from each transform
 rather than mutating in place:
@@ -1285,26 +1287,26 @@ rule_docs = {
 
 The `examples/` directory contains:
 
-| File                        | Description                                       |
-| --------------------------- | ------------------------------------------------- |
-| `rules_example.py`          | Using `@rule` and `@rule_args` decorators         |
-| `transforms_example.py`     | Using `@pipe` and `@pipe_args` for data pipelines |
-| `registry_example.py`       | Loading rules from `.kpz` files                   |
-| `tracing_example.py`        | Tracing, debugging, and explaining rules          |
-| `validation_example.py`     | Validation with error messages                    |
-| `async_example.py`          | Async rules, transforms, and retry                |
-| `temporal_example.py`       | Time-based and date-based rules                   |
-| `functional_example.py`     | Functional programming patterns and composition   |
-| `then_operator_example.py`  | Using `>>` (THEN) for sequencing                  |
-| `access_control.kpz`        | Access control with AND/OR/NOT                    |
-| `trading.kpz`               | Tiered trading permissions                        |
-| `pipeline.kpz`              | Data pipeline with `>>` (THEN) operator           |
-| `pricing.kpz`               | IF/THEN/ELSE conditional branching                |
-| `tiered_pricing.kpz`        | Nested IF/THEN/ELSE for multi-tier logic          |
-| `content_moderation.kpz`    | Word-syntax keywords (AND, OR, NOT)               |
-| `data_enrichment.kpz`       | `:retry` and `:cached` modifiers                  |
-| `fraud_detection.kpz`       | Complex nested logic with modifiers               |
-| `feature_flags.kpz`         | Ternary `? :` syntax with `:cached`               |
+| File                       | Description                                       |
+| -------------------------- | ------------------------------------------------- |
+| `rules_example.py`         | Using `@rule` and `@rule_args` decorators         |
+| `transforms_example.py`    | Using `@pipe` and `@pipe_args` for data pipelines |
+| `registry_example.py`      | Loading rules from `.kpz` files                   |
+| `tracing_example.py`       | Tracing, debugging, and explaining rules          |
+| `validation_example.py`    | Validation with error messages                    |
+| `async_example.py`         | Async rules, transforms, and retry                |
+| `temporal_example.py`      | Time-based and date-based rules                   |
+| `functional_example.py`    | Functional programming patterns and composition   |
+| `then_operator_example.py` | Using `>>` (THEN) for sequencing                  |
+| `access_control.kpz`       | Access control with AND/OR/NOT                    |
+| `trading.kpz`              | Tiered trading permissions                        |
+| `pipeline.kpz`             | Data pipeline with `>>` (THEN) operator           |
+| `pricing.kpz`              | IF/THEN/ELSE conditional branching                |
+| `tiered_pricing.kpz`       | Nested IF/THEN/ELSE for multi-tier logic          |
+| `content_moderation.kpz`   | Word-syntax keywords (AND, OR, NOT)               |
+| `data_enrichment.kpz`      | `:retry` and `:cached` modifiers                  |
+| `fraud_detection.kpz`      | Complex nested logic with modifiers               |
+| `feature_flags.kpz`        | Ternary `? :` syntax with `:cached`               |
 
 Run examples:
 
