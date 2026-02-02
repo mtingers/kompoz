@@ -1294,6 +1294,7 @@ The `examples/` directory contains:
 | `validation_example.py`     | Validation with error messages                    |
 | `async_example.py`          | Async rules, transforms, and retry                |
 | `temporal_example.py`       | Time-based and date-based rules                   |
+| `functional_example.py`     | Functional programming patterns and composition   |
 | `then_operator_example.py`  | Using `>>` (THEN) for sequencing                  |
 | `access_control.kpz`        | Access control with AND/OR/NOT                    |
 | `trading.kpz`               | Tiered trading permissions                        |
