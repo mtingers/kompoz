@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -88,40 +89,51 @@ class TestDuringHours:
             _, ctx = h.run("my_context")
             assert ctx == "my_context"
 
+    def test_with_timezone(self):
+        h = during_hours(9, 17, tz="America/New_York")
+        assert h._tz_info == ZoneInfo("America/New_York")
+
 
 class TestOnWeekdays:
     def test_weekday(self):
         w = on_weekdays()
-        # Monday = 0
-        with patch("kompoz._temporal.datetime") as mock_dt:
-            mock_dt.now.return_value.weekday.return_value = 0
+        # Monday
+        with patch("kompoz._temporal._today", return_value=date(2026, 1, 5)):
             ok, _ = w.run(None)
             assert ok
 
     def test_weekend(self):
         w = on_weekdays()
-        # Saturday = 5
-        with patch("kompoz._temporal.datetime") as mock_dt:
-            mock_dt.now.return_value.weekday.return_value = 5
+        # Saturday
+        with patch("kompoz._temporal._today", return_value=date(2026, 1, 3)):
             ok, _ = w.run(None)
             assert not ok
 
     def test_repr(self):
         assert repr(on_weekdays()) == "on_weekdays()"
 
+    def test_with_timezone(self):
+        w = on_weekdays(tz="America/New_York")
+        assert w._tz_info == ZoneInfo("America/New_York")
+        # Friday in UTC but Saturday in Tokyo
+        # 2026-01-09 is a Friday
+        with patch("kompoz._temporal._today", return_value=date(2026, 1, 9)):
+            ok, _ = w.run(None)
+            assert ok
+
 
 class TestOnDays:
     def test_matching_day(self):
         d = on_days(0, 2, 4)  # Mon, Wed, Fri
-        with patch("kompoz._temporal.datetime") as mock_dt:
-            mock_dt.now.return_value.weekday.return_value = 2  # Wednesday
+        # Wednesday
+        with patch("kompoz._temporal._today", return_value=date(2026, 1, 7)):
             ok, _ = d.run(None)
             assert ok
 
     def test_non_matching_day(self):
         d = on_days(0, 2, 4)
-        with patch("kompoz._temporal.datetime") as mock_dt:
-            mock_dt.now.return_value.weekday.return_value = 1  # Tuesday
+        # Tuesday
+        with patch("kompoz._temporal._today", return_value=date(2026, 1, 6)):
             ok, _ = d.run(None)
             assert not ok
 
@@ -132,26 +144,27 @@ class TestOnDays:
     def test_repr(self):
         assert repr(on_days(0, 2)) == "on_days(0, 2)"
 
+    def test_with_timezone(self):
+        d = on_days(0, 2, 4, tz="Europe/London")
+        assert d._tz_info == ZoneInfo("Europe/London")
+
 
 class TestAfterDate:
     def test_after(self):
         a = after_date(2020, 1, 1)
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = a.run(None)
             assert ok
 
     def test_before(self):
         a = after_date(2030, 1, 1)
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = a.run(None)
             assert not ok
 
     def test_same_day(self):
         a = after_date(2025, 6, 1)
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = a.run(None)
             assert not ok  # after, not on
 
@@ -166,26 +179,27 @@ class TestAfterDate:
     def test_repr(self):
         assert "2020-01-01" in repr(after_date(2020, 1, 1))
 
+    def test_with_timezone(self):
+        a = after_date(2020, 1, 1, tz="US/Pacific")
+        assert a._tz_info == ZoneInfo("US/Pacific")
+
 
 class TestBeforeDate:
     def test_before(self):
         b = before_date(2030, 1, 1)
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = b.run(None)
             assert ok
 
     def test_after(self):
         b = before_date(2020, 1, 1)
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = b.run(None)
             assert not ok
 
     def test_same_day(self):
         b = before_date(2025, 6, 1)
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = b.run(None)
             assert not ok  # before, not on
 
@@ -196,40 +210,39 @@ class TestBeforeDate:
     def test_repr(self):
         assert "2030-12-31" in repr(before_date(2030, 12, 31))
 
+    def test_with_timezone(self):
+        b = before_date(2030, 1, 1, tz="Asia/Tokyo")
+        assert b._tz_info == ZoneInfo("Asia/Tokyo")
+
 
 class TestBetweenDates:
     def test_within_range(self):
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 15)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 15)):
             ok, _ = b.run(None)
             assert ok
 
     def test_before_range(self):
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2024, 12, 31)
+        with patch("kompoz._temporal._today", return_value=date(2024, 12, 31)):
             ok, _ = b.run(None)
             assert not ok
 
     def test_after_range(self):
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2026, 1, 1)
+        with patch("kompoz._temporal._today", return_value=date(2026, 1, 1)):
             ok, _ = b.run(None)
             assert not ok
 
     def test_on_start_boundary(self):
         b = between_dates(date(2025, 6, 1), date(2025, 6, 30))
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 1)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 1)):
             ok, _ = b.run(None)
             assert ok  # inclusive
 
     def test_on_end_boundary(self):
         b = between_dates(date(2025, 6, 1), date(2025, 6, 30))
-        with patch("kompoz._temporal.date") as mock_date:
-            mock_date.today.return_value = date(2025, 6, 30)
+        with patch("kompoz._temporal._today", return_value=date(2025, 6, 30)):
             ok, _ = b.run(None)
             assert ok  # inclusive
 
@@ -250,3 +263,12 @@ class TestBetweenDates:
         b = between_dates(date(2025, 1, 1), date(2025, 12, 31))
         assert "2025-01-01" in repr(b)
         assert "2025-12-31" in repr(b)
+
+    def test_with_timezone(self):
+        b = between_dates(date(2025, 1, 1), date(2025, 12, 31), tz="US/Eastern")
+        assert b._tz_info == ZoneInfo("US/Eastern")
+
+    def test_integer_constructor_with_timezone(self):
+        b = between_dates(2025, 1, 1, 2025, 12, 31, tz="US/Eastern")
+        assert b._tz_info == ZoneInfo("US/Eastern")
+        assert b.start_date == date(2025, 1, 1)

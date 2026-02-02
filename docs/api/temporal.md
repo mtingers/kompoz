@@ -32,15 +32,18 @@ full_hours = during_hours(9, 17, inclusive_end=True)
 ## on_weekdays
 
 ```python
-on_weekdays() -> Predicate
+on_weekdays(tz: str | None = None) -> Predicate
 ```
 
 Check if today is Monday through Friday.
+
+- `tz` -- Optional timezone name (defaults to local time)
 
 ```python
 from kompoz import on_weekdays
 
 weekdays = on_weekdays()
+weekdays_ny = on_weekdays(tz="America/New_York")
 ```
 
 ---
@@ -48,16 +51,19 @@ weekdays = on_weekdays()
 ## on_days
 
 ```python
-on_days(*days: int) -> Predicate
+on_days(*days: int, tz: str | None = None) -> Predicate
 ```
 
 Check if today is one of the specified days. Days use Monday=0, Sunday=6.
+
+- `tz` -- Optional timezone name (defaults to local time)
 
 ```python
 from kompoz import on_days
 
 mwf = on_days(0, 2, 4)      # Mon, Wed, Fri
 weekends = on_days(5, 6)     # Sat, Sun
+weekends_tokyo = on_days(5, 6, tz="Asia/Tokyo")
 ```
 
 ---
@@ -65,15 +71,18 @@ weekends = on_days(5, 6)     # Sat, Sun
 ## after_date
 
 ```python
-after_date(year: int, month: int, day: int) -> Predicate
+after_date(year: int, month: int, day: int, tz: str | None = None) -> Predicate
 ```
 
-Check if today is on or after the given date.
+Check if today is after the given date (not inclusive).
+
+- `tz` -- Optional timezone name (defaults to local time)
 
 ```python
 from kompoz import after_date
 
 launched = after_date(2024, 6, 1)
+launched_jp = after_date(2024, 6, 1, tz="Asia/Tokyo")
 ```
 
 ---
@@ -81,10 +90,12 @@ launched = after_date(2024, 6, 1)
 ## before_date
 
 ```python
-before_date(year: int, month: int, day: int) -> Predicate
+before_date(year: int, month: int, day: int, tz: str | None = None) -> Predicate
 ```
 
-Check if today is on or before the given date.
+Check if today is before the given date (not inclusive).
+
+- `tz` -- Optional timezone name (defaults to local time)
 
 ```python
 from kompoz import before_date
@@ -97,14 +108,17 @@ promo_active = before_date(2024, 12, 31)
 ## between_dates
 
 ```python
-between_dates(start: date, end: date) -> Predicate
+between_dates(start: date, end: date, tz: str | None = None) -> Predicate
 ```
 
 Check if today is within the date range (inclusive).
+
+- `tz` -- Optional timezone name (defaults to local time)
 
 ```python
 from kompoz import between_dates
 from datetime import date
 
 q1_only = between_dates(date(2024, 1, 1), date(2024, 3, 31))
+q1_tokyo = between_dates(date(2024, 1, 1), date(2024, 3, 31), tz="Asia/Tokyo")
 ```

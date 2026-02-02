@@ -1271,11 +1271,11 @@ rule_docs = {
 ### Temporal Combinators
 
 - **`during_hours(start, end, tz=None, inclusive_end=False)`**: Check if current hour is in range. Use `inclusive_end=True` to include the end hour.
-- **`on_weekdays()`**: Check if today is Monday-Friday
-- **`on_days(*days)`**: Check if today is one of the specified days (0=Monday, 6=Sunday)
-- **`after_date(year, month, day)`**: Check if today is after date
-- **`before_date(year, month, day)`**: Check if today is before date
-- **`between_dates(start, end)`**: Check if today is in date range
+- **`on_weekdays(tz=None)`**: Check if today is Monday-Friday
+- **`on_days(*days, tz=None)`**: Check if today is one of the specified days (0=Monday, 6=Sunday)
+- **`after_date(year, month, day, tz=None)`**: Check if today is after date
+- **`before_date(year, month, day, tz=None)`**: Check if today is before date
+- **`between_dates(start, end, tz=None)`**: Check if today is in date range
 
 ### Utility Combinators
 

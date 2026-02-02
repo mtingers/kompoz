@@ -107,11 +107,11 @@ Quick-lookup table of all public symbols in `kompoz`.
 | Symbol | Kind | Description |
 | --- | --- | --- |
 | [`during_hours`](temporal.md#during_hours) | function | Check if current hour is in range |
-| [`on_weekdays`](temporal.md#on_weekdays) | function | Check if today is Monday-Friday |
-| [`on_days`](temporal.md#on_days) | function | Check if today is one of the specified days |
-| [`after_date`](temporal.md#after_date) | function | Check if today is after date |
-| [`before_date`](temporal.md#before_date) | function | Check if today is before date |
-| [`between_dates`](temporal.md#between_dates) | function | Check if today is in date range |
+| [`on_weekdays`](temporal.md#on_weekdays) | function | Check if today is Monday-Friday (tz-aware) |
+| [`on_days`](temporal.md#on_days) | function | Check if today is one of the specified days (tz-aware) |
+| [`after_date`](temporal.md#after_date) | function | Check if today is after date (tz-aware) |
+| [`before_date`](temporal.md#before_date) | function | Check if today is before date (tz-aware) |
+| [`between_dates`](temporal.md#between_dates) | function | Check if today is in date range (tz-aware) |
 
 ## Utilities
 

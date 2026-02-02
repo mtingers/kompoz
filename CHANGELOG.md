@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-02-01
+
+### Added
+
+- Timezone support (`tz` parameter) for `on_weekdays`, `on_days`, `after_date`, `before_date`, and `between_dates`
+- Shared `_resolve_tz()`, `_now()`, `_today()` helpers in `_temporal.py` to consolidate timezone logic
+- MkDocs Material documentation site with GitHub Pages deployment (28 pages)
+- GitHub Actions workflow for automatic docs deployment on push to `main`
+- `docs-serve` and `docs-build` Makefile targets
+
+### Changed
+
+- `during_hours` refactored to use shared `_now()` helper (no API change)
+
 ## [0.3.0] - 2026-02-01
 
 ### Added
