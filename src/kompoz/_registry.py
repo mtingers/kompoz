@@ -223,12 +223,19 @@ class ExpressionParser:
         start = self.pos
         if self.text[self.pos] == "-":
             self.pos += 1
+        has_dot = False
         while self.pos < len(self.text) and (
             self.text[self.pos].isdigit() or self.text[self.pos] == "."
         ):
+            if self.text[self.pos] == ".":
+                if has_dot:
+                    raise ValueError(f"Invalid number at position {start}: multiple decimal points")
+                has_dot = True
             self.pos += 1
         text = self.text[start : self.pos]
-        return float(text) if "." in text else int(text)
+        if text in ("-", ".", "-."):
+            raise ValueError(f"Invalid number at position {start}: {text!r}")
+        return float(text) if has_dot else int(text)
 
     def _read_ident(self) -> str:
         """Read an identifier."""
@@ -507,8 +514,6 @@ class _CachedCombinatorWrapper(Combinator[T]):
     Used by Registry when :cached modifier is applied to non-Predicate combinators.
     The cache is keyed by object id and is shared across all instances.
     """
-
-    _cache: ClassVar[dict[int, tuple[bool, Any]]] = {}
 
     def __init__(self, inner: Combinator[T]):
         self.inner = inner
